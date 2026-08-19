@@ -29,10 +29,9 @@ public:
     void begin_request(std::uint64_t id, int prompt_tokens);
     void end_request(std::uint64_t id);
 
-    // Oldest-first (id order = FIFO arrival order) prompt sizes of in-flight
-    // requests, for /slots. The engine does not expose its own slot table;
-    // these are HTTP-layer queue positions, which coincide with engine state
-    // for the bounded-FIFO, no-preemption scheduler this server runs.
+    // Oldest-first (id order = FIFO arrival order) prompt sizes of HTTP-layer
+    // in-flight requests. This remains available for metrics/tests; /slots now
+    // uses the Engine's boundary-consistent runtime lane snapshot.
     [[nodiscard]] std::vector<std::pair<std::uint64_t, int>> active_snapshot() const;
 
     // Accumulates one completed request. Called from the same funnel as the

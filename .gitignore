@@ -15,6 +15,7 @@ CMakeUserPresets.json
 *.ncu-rep
 *.qdrep
 *.sqlite
+ninfer_ui/history.sqlite3*
 
 # Python tooling
 __pycache__/

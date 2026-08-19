@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <exception>
@@ -264,31 +265,44 @@ void HttpServer::register_routes() {
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
         res.set_content(metrics_.render(options_.max_concurrency), "text/plain; version=0.0.4");
     });
-    // llama.cpp-shaped slot detail. The Engine has no exposed slot table, so
-    // the first `max_concurrency` in-flight requests (FIFO order) count as
-    // processing and the rest of the table reads idle; per-slot cache detail
-    // is unknown mid-flight and reported as zero. A fully idle table keeps
-    // the last completed request's counts on slot 0 - llama.cpp retains slot
-    // state the same way, and scrapers read it as the resident session
-    // depth, which the prefix cache genuinely still holds. With requests in
-    // flight the retained figure is suppressed: it may describe the same
-    // session a busy slot is already reporting, and per-slot attribution is
-    // unknowable without an engine slot table.
+    // llama.cpp-shaped slot detail backed by the Engine's boundary-consistent
+    // runtime lanes. A fully idle table keeps the last completed request's
+    // counts on slot 0 - llama.cpp retains slot state the same way, and
+    // scrapers read it as the resident session depth, which the prefix cache
+    // genuinely still holds.
     server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
-        const auto active = metrics_.active_snapshot();
-        const auto last   = metrics_.last_completed();
+        const auto runtime = service_->runtime_stats();
+        const auto last    = metrics_.last_completed();
         const bool speculative =
             options_.speculative.backend != ninfer::SpeculativeBackend::None;
         nlohmann::json slots = nlohmann::json::array();
         for (std::uint32_t i = 0; i < options_.max_concurrency; ++i) {
-            const bool busy    = i < active.size();
-            const bool retains = active.empty() && i == 0;
+            const auto& runtime_slot = runtime.slots[i];
+            const bool busy          = runtime_slot.active;
+            const bool retains       = runtime.running_requests == 0 && i == 0;
+            const std::uint32_t prompt_tokens =
+                busy ? runtime_slot.prompt_tokens
+                     : (retains ? static_cast<std::uint32_t>(last.prompt_tokens) : 0U);
+            const std::uint32_t cached_tokens =
+                busy ? runtime_slot.reusable_prompt_tokens
+                     : (retains ? static_cast<std::uint32_t>(last.cached_tokens) : 0U);
+            const std::uint32_t processed_tokens =
+                busy ? std::min(prompt_tokens,
+                                cached_tokens + runtime_slot.processed_prompt_tokens)
+                     : prompt_tokens;
+            const char* state = !busy                    ? "idle"
+                                : runtime_slot.prefilling ? "prefill"
+                                : runtime_slot.decode_ready ? "decode"
+                                                            : "processing";
             slots.push_back({{"id", i},
+                             {"request_id", busy ? runtime_slot.request_id : 0U},
                              {"is_processing", busy},
                              {"n_ctx", options_.max_context},
-                             {"n_prompt_tokens",
-                              busy ? active[i].second : (retains ? last.prompt_tokens : 0)},
-                             {"n_prompt_tokens_cache", retains ? last.cached_tokens : 0},
+                             {"n_prompt_tokens", prompt_tokens},
+                             {"n_prompt_tokens_processed", processed_tokens},
+                             {"n_prompt_tokens_cache", cached_tokens},
+                             {"n_generated_tokens", busy ? runtime_slot.generated_tokens : 0U},
+                             {"state", state},
                              {"speculative", speculative}});
         }
         res.set_content(slots.dump(), "application/json");

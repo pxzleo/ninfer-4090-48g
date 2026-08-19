@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0a0d0f">
+    <title>NInfer Control</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail" aria-label="主导航" data-i18n-aria="nav.main">
+        <a class="mark" href="#overview" aria-label="NInfer Control 首页" data-i18n-aria="nav.home">
+          <span>N</span>
+        </a>
+        <nav>
+          <button class="nav-item is-active" data-view="overview" aria-label="实时监控" title="实时监控" data-i18n-aria="nav.overview" data-i18n-title="nav.overview">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15h3l2-7 4 11 2-7h5"/></svg>
+          </button>
+          <button class="nav-item" data-view="requests" aria-label="请求记录" title="请求记录" data-i18n-aria="nav.requests" data-i18n-title="nav.requests">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12M6 12h12M6 19h8"/></svg>
+          </button>
+          <button class="nav-item" data-view="settings" aria-label="运行配置" title="运行配置" data-i18n-aria="nav.settings" data-i18n-title="nav.settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.4 6A7 7 0 0 0 8 7.1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1A7 7 0 0 0 10 18l.3 2.6h4L15 18a7 7 0 0 0 1.6-1.1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg>
+          </button>
+        </nav>
+        <div class="rail-foot">
+          <span class="rail-status" id="rail-status" title="连接状态" data-i18n-title="connection.status"></span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">LOCAL INFERENCE / RTX 4090</p>
+            <h1>NInfer Control</h1>
+          </div>
+          <div class="topbar-status">
+            <label class="language-control">
+              <span data-i18n="language.label">界面语言</span>
+              <select id="language-select" aria-label="界面语言" data-i18n-aria="language.label">
+                <option value="auto" data-i18n="language.auto">自动</option>
+                <option value="zh-CN" data-i18n="language.zh">中文</option>
+                <option value="en" data-i18n="language.en">English</option>
+              </select>
+            </label>
+            <div class="connection" id="connection-badge">
+              <span class="status-dot"></span>
+              <span id="connection-label" data-i18n="connection.connecting">正在连接</span>
+            </div>
+            <div class="freshness">
+              <span data-i18n="connection.updated">最后更新</span>
+              <time id="last-updated">--:--:--</time>
+            </div>
+            <button class="icon-button" id="refresh-button" aria-label="立即刷新" title="立即刷新" data-i18n-aria="action.refresh" data-i18n-title="action.refresh">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.5 10A7 7 0 0 0 6 7.5L4 10m2 4a7 7 0 0 0 12 2.5L20 14"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <main>
+          <section class="view is-active" id="view-overview" aria-labelledby="overview-title">
+            <div class="section-heading overview-heading entrance">
+              <div class="overview-title">
+                <p class="section-kicker">LIVE WORKLOAD</p>
+                <h2 id="overview-title" data-i18n="overview.title">实时运行</h2>
+                <p id="model-line" data-i18n="overview.waitingModel">等待模型信息</p>
+              </div>
+              <div class="overview-totals" aria-label="累计用量" data-i18n-aria="overview.totals">
+                <div><span data-i18n="metric.requestsTotal">累计请求</span><strong id="overview-request-total">—</strong></div>
+                <div><span data-i18n="metric.outputTotal">累计输出</span><strong id="overview-output-total">—</strong></div>
+                <div><span data-i18n="metric.inputTotal">累计输入</span><strong id="overview-prompt-total">—</strong></div>
+              </div>
+            </div>
+
+            <div class="primary-readout entrance delay-1">
+              <div class="throughput-lead">
+                <div class="metric-label" data-i18n="metric.aggregateDecode">聚合解码</div>
+                <div class="metric-value"><strong id="decode-rate">—</strong><span>tok/s</span></div>
+                <div class="metric-context" id="decode-context" data-i18n="metric.waitingThroughput">等待首个吞吐周期</div>
+              </div>
+              <div class="support-metrics">
+                <div>
+                  <span data-i18n="metric.prefill">预填充</span>
+                  <strong id="prefill-rate">—</strong>
+                  <small>tok/s</small>
+                </div>
+                <div>
+                  <span data-i18n="metric.runningQueued">执行 / 排队</span>
+                  <strong><b id="active-requests">—</b> / <b id="queued-requests">—</b></strong>
+                  <small>requests</small>
+                </div>
+                <div>
+                  <span data-i18n="metric.mtpAcceptance">MTP 接受率</span>
+                  <strong id="mtp-rate">—</strong>
+                  <small data-i18n="metric.cumulative">累计</small>
+                </div>
+                <div>
+                  <span data-i18n="metric.cacheHitRate">缓存命中率</span>
+                  <strong id="cache-rate">—</strong>
+                  <small id="cache-tokens">— tokens</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="trend-panel entrance delay-2">
+              <div class="panel-heading">
+                <div>
+                  <h3 data-i18n="trend.title">吞吐趋势</h3>
+                    <p id="trend-window-label" data-i18n="trend.defaultWindow">服务端两秒执行窗口</p>
+                </div>
+                <div class="trend-tools">
+                  <div class="range-switch" aria-label="吞吐趋势时间范围" data-i18n-aria="trend.range">
+                    <button class="is-active" type="button" data-history-range="realtime" aria-pressed="true" data-i18n="trend.realtime">实时</button>
+                    <button type="button" data-history-range="day" aria-pressed="false" data-i18n="trend.day">天</button>
+                    <button type="button" data-history-range="week" aria-pressed="false" data-i18n="trend.week">周</button>
+                    <button type="button" data-history-range="month" aria-pressed="false" data-i18n="trend.month">月</button>
+                  </div>
+                  <div class="period-nav" id="period-nav" hidden>
+                    <button type="button" id="history-prev" aria-label="上一周期" title="上一周期" data-i18n-aria="trend.previous" data-i18n-title="trend.previous">‹</button>
+                    <span id="history-period-label">—</span>
+                    <button type="button" id="history-next" aria-label="下一周期" title="下一周期" data-i18n-aria="trend.next" data-i18n-title="trend.next">›</button>
+                  </div>
+                  <div class="legend">
+                    <span><i class="legend-decode"></i><b data-i18n="metric.decode">解码</b></span>
+                    <span><i class="legend-prefill"></i><b data-i18n="metric.prefill">预填充</b></span>
+                  </div>
+                </div>
+              </div>
+              <div class="chart-wrap">
+                <svg id="throughput-chart" viewBox="0 0 900 240" preserveAspectRatio="none" role="img" aria-label="吞吐趋势图" data-i18n-aria="trend.chart">
+                  <g class="chart-grid"></g>
+                  <path class="area area-prefill" id="prefill-area"></path>
+                  <path class="line line-prefill" id="prefill-line"></path>
+                  <path class="area area-decode" id="decode-area"></path>
+                  <path class="line line-decode" id="decode-line"></path>
+                </svg>
+                <div class="chart-cursor" id="chart-cursor" hidden></div>
+                <div class="chart-tooltip" id="chart-tooltip" role="status" hidden>
+                  <time id="chart-tooltip-time">—</time>
+                  <div><span><i class="legend-decode"></i><b data-i18n="metric.decode">解码</b></span><strong id="chart-tooltip-decode">—</strong></div>
+                  <div><span><i class="legend-prefill"></i><b data-i18n="metric.prefill">预填充</b></span><strong id="chart-tooltip-prefill">—</strong></div>
+                </div>
+                <div class="chart-axis">
+                  <span>—</span><span>—</span><span>—</span><span>—</span><span>—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="operations-grid entrance delay-3">
+              <section class="slots-panel" aria-labelledby="slots-title">
+                <div class="panel-heading">
+                  <div>
+                    <h3 id="slots-title" data-i18n="slots.title">执行槽</h3>
+                    <p data-i18n="slots.description">执行阶段、上下文占用与推测解码状态</p>
+                  </div>
+                  <span class="quiet-badge" id="batch-badge">BATCH —</span>
+                </div>
+                <div class="slot-list" id="slot-list"></div>
+              </section>
+
+              <section class="gpu-panel" aria-labelledby="gpu-title">
+                <div class="panel-heading">
+                  <div>
+                    <h3 id="gpu-title">GPU</h3>
+                    <p id="gpu-name">NVIDIA GPU</p>
+                  </div>
+                  <span class="temperature" id="gpu-temp">—°C</span>
+                </div>
+                <div class="gpu-core">
+                  <div class="radial" id="gpu-radial">
+                    <div><strong id="gpu-util">—</strong><span>%</span><small data-i18n="gpu.utilization">利用率</small></div>
+                  </div>
+                  <div class="gpu-details">
+                    <div><span data-i18n="gpu.memory">显存</span><strong id="gpu-memory">—</strong></div>
+                    <div class="meter"><i id="gpu-memory-meter"></i></div>
+                    <div><span data-i18n="gpu.power">功耗</span><strong id="gpu-power">—</strong></div>
+                    <div><span data-i18n="gpu.clock">SM 时钟</span><strong id="gpu-clock">—</strong></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" id="view-requests" aria-labelledby="requests-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">REQUEST TRACE</p>
+                <h2 id="requests-title" data-i18n="requests.title">最近完成</h2>
+              </div>
+              <button class="text-button" id="reload-logs" data-i18n="requests.refreshLogs">刷新日志</button>
+            </div>
+            <div class="request-summary">
+              <div><span data-i18n="metric.requestsTotal">累计请求</span><strong id="request-total">—</strong></div>
+              <div><span data-i18n="metric.outputTotal">累计输出</span><strong id="output-total">—</strong></div>
+              <div><span data-i18n="metric.inputTotal">累计输入</span><strong id="prompt-total">—</strong></div>
+            </div>
+            <div class="request-table-wrap">
+              <table class="request-table">
+                <thead>
+                  <tr><th data-i18n="requests.request">请求</th><th data-i18n="requests.finish">结束</th><th data-i18n="requests.input">输入</th><th data-i18n="requests.output">输出</th><th data-i18n="requests.cacheHit">缓存命中</th><th>TTFT</th><th data-i18n="metric.decode">解码</th><th data-i18n="requests.duration">耗时</th><th>MTP</th></tr>
+                </thead>
+                <tbody id="request-table-body"></tbody>
+              </table>
+              <div class="empty-state" id="request-empty" data-i18n="requests.empty">尚无已完成请求</div>
+            </div>
+            <details class="raw-log" id="raw-log-details">
+              <summary><b data-i18n="requests.rawLogs">原始服务日志</b> <span data-i18n="requests.autoRefresh">自动刷新 · 2 秒</span></summary>
+              <pre id="raw-log-output" data-i18n="requests.notLoaded">尚未加载</pre>
+            </details>
+          </section>
+
+          <section class="view" id="view-settings" aria-labelledby="settings-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">STARTUP PROFILE</p>
+                <h2 id="settings-title" data-i18n="settings.title">运行配置</h2>
+              </div>
+              <div class="config-state"><span data-i18n="settings.configFile">配置文件</span><code id="compose-path">—</code></div>
+            </div>
+
+            <div class="settings-layout">
+              <form class="settings-form" id="settings-form">
+                <fieldset>
+                  <legend data-i18n="settings.capacity">容量与调度</legend>
+                  <div class="field-grid">
+                    <label><span data-i18n="settings.maxContext">单请求上下文</span><small data-i18n="settings.maxContextHelp">模型原生上限 262144</small><input name="max_context" type="number" min="1" max="262144" required></label>
+                    <label><span data-i18n="settings.kvCapacity">共享 KV 容量</span><small data-i18n="settings.kvCapacityHelp">可填 auto 或 token 数</small><input name="kv_capacity" type="text" required></label>
+                    <label><span data-i18n="settings.maxConcurrency">最大并发</span><small data-i18n="settings.maxConcurrencyHelp">有效范围 1–8</small><input name="max_concurrency" type="number" min="1" max="8" required></label>
+                    <label><span data-i18n="settings.maxQueue">排队上限</span><small data-i18n="settings.maxQueueHelp">不占用执行槽</small><input name="max_pending_requests" type="number" min="1" max="1024" required></label>
+                    <label><span data-i18n="settings.queueTimeout">排队超时</span><small data-i18n="settings.milliseconds">毫秒</small><input name="pending_timeout_ms" type="number" min="1" max="3600000" required></label>
+                    <label><span data-i18n="settings.prefillChunk">预填充分块</span><small data-i18n="settings.prefillChunkHelp">128 的倍数</small><input name="prefill_chunk" type="number" step="128" min="128" required></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend data-i18n="settings.precision">精度与生成</legend>
+                  <div class="field-grid">
+                    <label><span data-i18n="settings.kvType">KV 类型</span><small data-i18n="settings.kvTypeHelp">上下文精度与容量</small><select name="kv_dtype"><option>bf16</option><option>int8</option><option>rk8v4</option><option>rk4v4</option><option>rk4v4-e8</option><option>rk2v4-e8</option></select></label>
+                    <label><span data-i18n="settings.specDecode">推测解码</span><small data-i18n="settings.specDecodeHelp">当前模型支持 MTP</small><select name="spec"><option value="mtp">MTP</option><option value="off" data-i18n="common.off">关闭</option></select></label>
+                    <label><span>Draft tokens</span><small data-i18n="settings.draftHelp">MTP 有效范围 1–5</small><input name="draft_tokens" type="number" min="1" max="5" required></label>
+                    <label><span data-i18n="settings.defaultOutput">默认最大输出</span><small data-i18n="settings.defaultOutputHelp">请求未指定时使用</small><input name="default_max_tokens" type="number" min="1" required></label>
+                    <label><span data-i18n="settings.statsInterval">统计周期</span><small data-i18n="settings.statsIntervalHelp">毫秒，0 表示关闭</small><input name="log_stats_interval_ms" type="number" min="0" max="600000" required></label>
+                  </div>
+                  <div class="toggle-grid">
+                    <label class="toggle"><input name="lm_head_draft" type="checkbox"><span></span><b data-i18n="settings.optimizeDraft">优化 Draft Head</b></label>
+                    <label class="toggle"><input name="vision" type="checkbox"><span></span><b data-i18n="settings.vision">图片 / 视频</b></label>
+                    <label class="toggle"><input name="preserve_thinking" type="checkbox"><span></span><b data-i18n="settings.preserveThinking">保留历史思考</b></label>
+                    <label class="toggle"><input name="thinking" type="checkbox"><span></span><b data-i18n="settings.defaultThinking">默认开启思考</b></label>
+                    <label class="toggle"><input name="prefix_reuse" type="checkbox"><span></span><b data-i18n="settings.prefixReuse">缓存复用</b></label>
+                    <label class="toggle"><input name="cuda_graph" type="checkbox"><span></span><b>CUDA Graph</b></label>
+                  </div>
+                </fieldset>
+
+                <fieldset class="history-management">
+                  <legend data-i18n="history.title">历史数据管理</legend>
+                  <p class="history-retention" data-i18n="history.retention">5 分钟级“均值 + 峰值”历史保存在本机 SQLite 数据库中，打开网页、重启 UI 或启停 NInfer 都会继续读取；保留最近 400 天，超过后自动清理。</p>
+                  <div class="history-delete-grid">
+                    <label><span data-i18n="history.startDate">开始日期</span><input id="history-delete-start" type="date"></label>
+                    <label><span data-i18n="history.endDate">结束日期</span><input id="history-delete-end" type="date"></label>
+                    <button class="button danger" type="button" id="clear-history" data-i18n="history.clearRange">清除日期段数据</button>
+                  </div>
+                </fieldset>
+
+                <div class="form-actions">
+                  <div>
+                    <button class="button secondary" type="button" id="reset-config" data-i18n="settings.restore">恢复当前文件</button>
+                    <button class="button primary" type="submit" data-i18n="settings.preview">预览变更</button>
+                  </div>
+                  <div class="service-actions" aria-label="NInfer 服务控制" data-i18n-aria="service.controls">
+                    <button class="button start" type="button" id="start-service" disabled data-i18n="service.start">启动 NInfer</button>
+                    <button class="button danger" type="button" id="stop-service" disabled data-i18n="service.stop">停止 NInfer</button>
+                    <button class="button secondary" type="button" id="restart-service" disabled data-i18n="service.restart">重启 NInfer</button>
+                  </div>
+                </div>
+              </form>
+
+              <aside class="diff-inspector">
+                <div class="panel-heading">
+                  <div><h3 data-i18n="settings.changePreview">变更预览</h3><p data-i18n="settings.noAutoRestart">写入不会自动重启服务</p></div>
+                  <span class="quiet-badge" id="revision-badge">REV —</span>
+                </div>
+                <pre id="config-diff" data-i18n="settings.previewHint">调整参数后点击“预览变更”</pre>
+                <button class="button apply" type="button" id="apply-config" disabled data-i18n="settings.writeCompose">写入 compose.yaml</button>
+              </aside>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <form method="dialog" class="confirm-box">
+        <p class="section-kicker" id="confirm-kicker">CONFIRM ACTION</p>
+        <h2 id="confirm-title" data-i18n="confirm.title">确认操作</h2>
+        <p id="confirm-message"></p>
+        <label><span><b data-i18n="confirm.enter">输入</b> <code id="confirm-phrase"></code> <b data-i18n="confirm.continue">继续</b></span><input id="confirm-input" autocomplete="off"></label>
+        <div class="dialog-actions">
+          <button class="button secondary" value="cancel" data-i18n="common.cancel">取消</button>
+          <button class="button danger" value="confirm" id="confirm-submit" disabled data-i18n="common.confirm">确认</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

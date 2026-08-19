@@ -201,6 +201,7 @@ public:
 private:
     void publish_runtime_stats() {
         RuntimeStats snapshot = cumulative_stats_;
+        snapshot.slots        = {};
         {
             std::lock_guard lock(queue_mutex_);
             snapshot.waiting_requests = static_cast<std::uint32_t>(pending_.size());
@@ -208,8 +209,19 @@ private:
         snapshot.prefilling_requests = prefill_lane_.has_value() ? 1U : 0U;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
             if (slots_[lane] == nullptr) { continue; }
+            const auto& request = slots_[lane];
             ++snapshot.running_requests;
-            if (slots_[lane]->decode_ready) { ++snapshot.decode_ready_requests; }
+            if (request->decode_ready) { ++snapshot.decode_ready_requests; }
+            snapshot.slots[lane] = RuntimeSlotStats{
+                .request_id              = request->id,
+                .prompt_tokens           = request->prompt_summary.prompt_tokens,
+                .reusable_prompt_tokens  = request->reusable_prompt_tokens,
+                .processed_prompt_tokens = request->processed_prompt_tokens,
+                .generated_tokens        = static_cast<std::uint32_t>(request->generated.size()),
+                .active                  = true,
+                .prefilling              = prefill_lane_ && *prefill_lane_ == lane,
+                .decode_ready             = request->decode_ready,
+            };
         }
         std::lock_guard lock(stats_mutex_);
         published_stats_ = snapshot;
@@ -296,6 +308,8 @@ private:
         std::optional<std::uint32_t> lane;
         std::atomic<bool> cancelled{false};
         bool decode_ready = false;
+        std::uint32_t reusable_prompt_tokens  = 0;
+        std::uint32_t processed_prompt_tokens = 0;
 
         std::optional<BasePlan> base_plan;
         std::array<std::optional<Plan>, kMaximumConcurrency> lane_plans{};
@@ -617,6 +631,7 @@ private:
     void resolve_prefill_step(const std::shared_ptr<Request>& request,
                               const PrefillStepResult& step, bool cancel_at_boundary) {
         cumulative_stats_.computed_prefill_tokens += step.processed_prompt_tokens;
+        request->processed_prompt_tokens += step.processed_prompt_tokens;
         consume_service_work(request, 1);
         if (step.host_input_consumed || step.complete) { request->host_input.reset(); }
         if (cancel_at_boundary) {
@@ -808,6 +823,8 @@ private:
             request->remaining_service_work = summary.service_work_quanta;
             request->backfill_epoch         = backfill_epoch;
             request->backfill_class         = backfill_class;
+            request->reusable_prompt_tokens = summary.reusable_prompt_tokens;
+            request->processed_prompt_tokens = 0;
             slots_[lane]                    = request;
             invalidate_lane_plans(lane);
 

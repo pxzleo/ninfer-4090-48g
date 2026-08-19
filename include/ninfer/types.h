@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -399,6 +400,17 @@ struct MemorySummary {
     std::size_t kv_payload_bytes                  = 0;
 };
 
+struct RuntimeSlotStats {
+    std::uint64_t request_id              = 0;
+    std::uint32_t prompt_tokens           = 0;
+    std::uint32_t reusable_prompt_tokens  = 0;
+    std::uint32_t processed_prompt_tokens = 0;
+    std::uint32_t generated_tokens        = 0;
+    bool active                           = false;
+    bool prefilling                       = false;
+    bool decode_ready                     = false;
+};
+
 // Monotonic execution counters plus one boundary-consistent scheduler snapshot. Consumers derive
 // interval throughput by subtracting two snapshots and dividing by their own monotonic wall time.
 struct RuntimeStats {
@@ -413,6 +425,7 @@ struct RuntimeStats {
     std::uint32_t prefilling_requests   = 0;
     std::uint32_t decode_ready_requests = 0;
     std::uint32_t waiting_requests      = 0;
+    std::array<RuntimeSlotStats, kMaximumConcurrency> slots{};
 };
 
 struct LoadSummary {

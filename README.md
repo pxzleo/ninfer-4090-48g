@@ -1,6 +1,7 @@
 # NInfer-4090
 
-NInfer-4090 runs **Qwen3.8-27B** on one 24 GB NVIDIA GeForce RTX 4090. It is an `sm_89` port of
+NInfer-4090 runs **Qwen3.8-27B** on one NVIDIA GeForce RTX 4090, including both the standard
+24 GB card and a 48 GB memory-upgraded card. It is an `sm_89` port of
 [NInfer-3090](https://github.com/Don-Chad/ninfer-3090), which derives from
 [Neroued/ninfer](https://github.com/Neroued/ninfer), a specialized C++20/CUDA inference engine.
 The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
@@ -13,10 +14,10 @@ Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
 
 ## Measured results on the RTX 4090
 
-Conditions: single request, greedy decoding, CUDA Graphs on, INT8 KV, `--prefill-chunk 1024`,
-official 16.96 GiB Qwen3.8-27B artifact. The code-generation decode row and the prefill rows
-are measured from the `ninfer-serve` `/metrics` counters (computed prefill only); the other
-decode rows use the `ninfer` CLI.
+Conditions: standard 24 GB RTX 4090, single request, greedy decoding, CUDA Graphs on, INT8 KV,
+`--prefill-chunk 1024`, and the official 16.96 GiB Qwen3.8-27B artifact. The code-generation
+decode row and the prefill rows are measured from the `ninfer-serve` `/metrics` counters
+(computed prefill only); the other decode rows use the `ninfer` CLI.
 
 | Test | Result |
 |---|---|
@@ -32,10 +33,10 @@ decode rows use the `ninfer` CLI.
 MTP acceptance, and with it the decoded rate, tracks how predictable the output is: structured
 code accepts about 81% of draft tokens, the mixed bench corpus about 49%.
 
-The shipping default has since moved from INT8 KV to the E8 4-bit KV mode, which serves the
-model's full native 262,144-token context on this card. Retrieval stays exact through 260K
-(single-needle, 5-needle, and exact-code-detail probes), MTP acceptance at depth is unchanged,
-and the costs against the INT8 numbers above are a 5.7% decode tax and 1-2% of prefill; see
+The standard 24 GB text-only default has since moved from INT8 KV to the E8 4-bit KV mode,
+which serves the model's full native 262,144-token context on this card. Retrieval stays exact
+through 260K (single-needle, 5-needle, and exact-code-detail probes), MTP acceptance at depth is
+unchanged, and the costs against the INT8 numbers above are a 5.7% decode tax and 1-2% of prefill; see
 [Quick start](#text-only-full-262k-native-context-e8-4-bit-kv-default) for the measured deltas.
 
 For scale: llama.cpp on the same card decodes the Qwen3.8-27B `UD-Q4_K_XL` GGUF at about
@@ -102,7 +103,10 @@ Full configurations, method, and raw numbers:
 
 ## Quick start (Linux)
 
-Requirements: an RTX 4090, a recent NVIDIA driver, Docker with the NVIDIA Container Toolkit.
+Requirements: an RTX 4090 with 24 GB or 48 GB of usable VRAM, a recent NVIDIA driver, Docker
+Engine with the Docker Compose v2 plugin, and the NVIDIA Container Toolkit. The 48 GB profile
+is intended for memory-upgraded RTX 4090 boards; confirm that the full capacity is visible in
+`nvidia-smi` before starting the service.
 
 Build the image and download the model once:
 
@@ -111,10 +115,11 @@ docker build --tag ninfer-4090:sm89 .
 NINFER_MODEL_DIR="$PWD/models" bash scripts/download-qwen38.sh
 ```
 
-Then start one of the three profiles. The API is available at `http://127.0.0.1:8080/v1`.
+Then start the included 48 GB Compose profile or one of the three 24 GB profiles below. The API
+is available at `http://127.0.0.1:8080/v1`.
 
-All three profiles run one generation slot. Extra requests wait in the admission
-queue, and the queue deadline defaults to 30 seconds. A deep prefill can hold the
+The three 24 GB `docker run` profiles below use one generation slot. Extra requests wait in the
+admission queue, and the queue deadline defaults to 30 seconds. A deep prefill can hold the
 slot longer than that, so parallel agent clients would fail with
 `request_queue_timeout`. The `--pending-timeout-ms 600000` line raises the
 deadline to 10 minutes. On a streaming request the timeout arrives as an in-band
@@ -122,7 +127,44 @@ SSE error event after HTTP 200; a client that does not parse error events sees a
 stream that ends without a `finish_reason`. See [docs/serving.md](docs/serving.md)
 for the full queue contract.
 
-### Text-only, full 262K native context (E8 4-bit KV, default)
+### RTX 4090 48 GB profile: 262K context, vision, and concurrency
+
+The repository includes [`compose.yaml`](compose.yaml) for a 48 GB memory-upgraded RTX 4090.
+It keeps image and video input enabled while using INT8 KV cache, the model's full native
+262,144-token per-request context, a 524,288-token shared KV pool, and up to eight execution
+slots:
+
+```bash
+docker compose up --build -d ninfer
+curl --fail http://127.0.0.1:8080/health
+```
+
+The important settings in the supplied profile are:
+
+| Setting | Value | Meaning |
+|---|---:|---|
+| `--max-context` | `262144` | Maximum context for one request |
+| `--kv-capacity` | `524288` | Shared KV capacity across all active requests |
+| `--max-concurrency` | `8` | Maximum number of execution slots, not eight full 262K contexts |
+| `--kv-dtype` | `int8` | Higher-precision KV cache than the compressed E8 profiles |
+| `--vision` | enabled | Loads image/video processing support |
+| `--spec mtp --draft-tokens 3` | enabled | MTP speculative decoding |
+| `--log-stats-interval-ms` | `2000` | Two-second runtime statistics for the monitoring UI |
+
+`--max-context` is a per-request limit, while `--kv-capacity` is shared. With the supplied
+values, the scheduler can run up to eight requests when their combined live KV usage fits
+within 524,288 tokens; it cannot hold eight independent 262K contexts at once. Increasing
+concurrency usually improves aggregate throughput for multiple clients, but reduces the GPU
+time available to each request and can increase latency. The published performance tables in
+this README remain single-request measurements on the standard 24 GB card.
+
+To stop the service without deleting the model or history data:
+
+```bash
+docker compose stop ninfer
+```
+
+### Text-only, full 262K native context (E8 4-bit KV, 24 GB default)
 
 The E8 Conway-Sloane lattice KV mode (`rk4v4-e8`, ported from
 [UDPSendToFailed/ninfer-4090](https://github.com/UDPSendToFailed/ninfer-4090); see
@@ -212,6 +254,64 @@ For a native build, follow the [Linux build guide](docs/rtx-3090-linux.md) with
 `CMAKE_CUDA_ARCHITECTURES=89` (the default in this fork). The build requires CUDA 12.8 or newer,
 GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
 
+## NInfer Control UI
+
+This repository includes a lightweight local monitoring and configuration interface in
+[`ninfer_ui/`](ninfer_ui/). It uses only the Python standard library and reads NInfer's health,
+metrics, slot, model, Docker-log, and `nvidia-smi` data. Start NInfer first, then run the UI from
+the repository root:
+
+```bash
+python3 ninfer_ui/server.py --host 127.0.0.1 --port 8081
+```
+
+Open <http://127.0.0.1:8081>. The interface supports Chinese and English, follows the browser's
+preferred language by default, and remembers a manual language selection in that browser.
+
+### Live status and history
+
+- Refreshes every two seconds with aggregate decode and prefill rates, running and queued
+  requests, average batch size, cumulative token counts, MTP acceptance, and cache hit rate.
+- Shows every execution slot's prefill progress, independent decode rate, scheduling state,
+  retained cache state, and context usage.
+- Reports GPU utilization, VRAM, temperature, power, and SM clock.
+- Lists recent requests with input/output tokens, cache hit rate, TTFT, decode rate, wall time,
+  finish reason, and speculative-decoding statistics.
+- Provides raw Docker logs with two-second auto-refresh and automatic scrolling to the latest
+  line.
+- Plots live, calendar-day, calendar-week, and calendar-month throughput. Hover over a curve,
+  or tap it on a touch device, to inspect the nearest plotted sample or aggregate point's local
+  time, decode rate, and prefill rate.
+- Keeps raw two-second history for the latest five minutes and stores peak-preserving average
+  aggregates in `ninfer_ui/history.sqlite3`. Aggregate history survives UI and NInfer restarts,
+  and records older than 400 days are removed automatically.
+
+### Configuration and service control
+
+The configuration page edits the supported NInfer options in [`compose.yaml`](compose.yaml),
+validates values, and shows a unified diff before writing. Applying a configuration creates a
+backup under `ninfer_ui/backups/` and uses a revision check to avoid overwriting an external
+file change. Writing the file does **not** restart NInfer; use the separate start, stop, or
+restart controls when the new startup configuration should take effect. Stop and restart
+interrupt active and queued inference requests and therefore require explicit confirmation.
+
+The same page can delete throughput history for an inclusive local-calendar date range. This
+operation is irreversible and requires a typed confirmation phrase. It does not disable future
+history collection.
+
+By default, both NInfer (`127.0.0.1:8080`) and the UI (`127.0.0.1:8081`) are loopback-only. The UI
+also validates the client address, `Host`, `Origin`, JSON content type, and confirmation phrases
+for mutating operations. The account running the UI must have permission to use Docker for the
+container status, throughput logs, recent-request data, raw-log view, and service controls;
+without that permission, those parts of the UI are unavailable. Environment overrides and
+additional details are documented in [`ninfer_ui/README.md`](ninfer_ui/README.md).
+
+Run the UI test suite with:
+
+```bash
+python3 -m unittest discover -s ninfer_ui/tests -v
+```
+
 ## What this fork changes
 
 - **`sm_89` retarget.** The CMake architecture pin, the runtime compute-capability check, and the
@@ -234,9 +334,10 @@ GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
   server without changes. Prompt tokens count only computed prefill; prefix-cache hits are
   excluded, as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache
   hits, and MTP draft/acceptance totals.
-- **`GET /slots`.** A llama.cpp-shaped slot table built from in-flight requests, for dashboards
-  that poll slot state. Entries are HTTP-layer FIFO positions; per-slot cache detail is unknown
-  mid-flight and reported as zero.
+- **`GET /slots`.** A llama.cpp-shaped slot table built from the runtime lanes, including each
+  active request's generated-token counter for per-slot throughput dashboards that poll slot
+  state. Active entries include the lane phase, reusable prompt tokens, and boundary-consistent
+  processed prompt tokens so prefill progress can be displayed accurately.
 - **NVFP4-A4 test gating.** The A4 activation tests skip on hardware without FP4 tensor cores
   instead of aborting. The full remaining suite passes on the RTX 4090.
 - **E8 lattice KV quantization (ported).** The `rk8v4`/`rk4v4`/`rk4v4-e8`/`rk2v4-e8` KV modes
@@ -258,7 +359,10 @@ GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
   residency tables (the former hard abort above chunk 1024 is fixed), and chunks through 2688
   stay on split-K. Larger chunks route to the unsplit schedule, which is marginally less
   accurate at its onset (about 1e-5 relative).
-- Concurrency above one request is untested in this fork. The published cohort results in the
+- The published benchmark results are single-request measurements. The 48 GB Compose profile
+  exposes eight execution slots, but standardized multi-request scaling results are not yet
+  published; per-request latency and aggregate throughput depend on prompt depth, decode mix,
+  and shared KV pressure. The cohort results in the
   [3090 base](https://github.com/Don-Chad/ninfer-3090) do not transfer directly.
 - The limits of the base engine apply: one process, one GPU, one model, bounded FIFO admission,
   no multi-GPU execution, no weight offload.
