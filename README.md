@@ -268,6 +268,18 @@ python3 ninfer_ui/server.py --host 127.0.0.1 --port 8081
 Open <http://127.0.0.1:8081>. The interface supports Chinese and English, follows the browser's
 preferred language by default, and remembers a manual language selection in that browser.
 
+### Interface preview
+
+![NInfer Control live workload dashboard](docs/UI1.png)
+
+*Live workload view with aggregate and per-slot activity, cache and MTP statistics, cumulative
+token counters, and the interactive throughput timeline.*
+
+![NInfer Control runtime settings](docs/UI2.png)
+
+*Runtime settings view for the 48 GB profile, including capacity and scheduling, precision and
+generation options, configuration preview, history management, and NInfer service controls.*
+
 ### Live status and history
 
 - Refreshes every two seconds with aggregate decode and prefill rates, running and queued
@@ -299,9 +311,12 @@ The same page can delete throughput history for an inclusive local-calendar date
 operation is irreversible and requires a typed confirmation phrase. It does not disable future
 history collection.
 
-By default, both NInfer (`127.0.0.1:8080`) and the UI (`127.0.0.1:8081`) are loopback-only. The UI
-also validates the client address, `Host`, `Origin`, JSON content type, and confirmation phrases
-for mutating operations. The account running the UI must have permission to use Docker for the
+The supplied Compose profile publishes the NInfer API on `0.0.0.0:8080`, making it reachable from
+the local network through the host's LAN address. It does not configure router port forwarding or
+an API key; use a trusted LAN, restrict port 8080 with the host firewall, or add `--api-key` before
+serving untrusted clients. The UI remains loopback-only on `127.0.0.1:8081` by default and also
+validates the client address, `Host`, `Origin`, JSON content type, and confirmation phrases for
+mutating operations. The account running the UI must have permission to use Docker for the
 container status, throughput logs, recent-request data, raw-log view, and service controls;
 without that permission, those parts of the UI are unavailable. Environment overrides and
 additional details are documented in [`ninfer_ui/README.md`](ninfer_ui/README.md).
