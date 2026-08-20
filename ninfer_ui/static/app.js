@@ -14,10 +14,10 @@ const I18N = {
     "metric.requestsTotal": "累计请求", "metric.outputTotal": "累计输出", "metric.inputTotal": "累计输入", "metric.aggregateDecode": "聚合解码", "metric.waitingThroughput": "等待首个吞吐周期", "metric.prefill": "预填充", "metric.decode": "解码", "metric.runningQueued": "执行 / 排队", "metric.mtpAcceptance": "MTP 接受率", "metric.cumulative": "累计", "metric.cacheHitRate": "缓存命中率",
     "overview.model": "{model} · {context} 上下文 · 视觉能力：{vision}", "common.on": "开", "overview.window": "{seconds} 秒窗口 · {batch} 平均 batch", "overview.noActivity": "当前没有生成活动",
     "trend.title": "吞吐趋势", "trend.defaultWindow": "服务端两秒执行窗口", "trend.range": "吞吐趋势时间范围", "trend.realtime": "实时", "trend.day": "天", "trend.week": "周", "trend.month": "月", "trend.previous": "上一周期", "trend.next": "下一周期", "trend.chart": "吞吐趋势图", "trend.realtimeLabel": "最近5分钟 · 2秒采样", "trend.dayLabel": "自然日 · 5分钟峰值保真", "trend.weekLabel": "自然周 · 30分钟峰值保真", "trend.monthLabel": "自然月 · 2小时峰值保真", "trend.lastFiveMinutes": "最近5分钟", "trend.previousNamed": "上一{period}", "trend.nextNamed": "下一{period}", "trend.period": "周期", "trend.loadFailed": "吞吐历史读取失败: {message}",
-    "slots.title": "执行槽", "slots.description": "执行阶段、上下文占用与推测解码状态", "slots.idleCached": "空闲 · 缓存已保留", "slots.idle": "空闲", "slots.prefillingProgress": "预填充中 · {progress}%", "slots.decodingRate": "解码中 · {rate} tok/s", "slots.decodingSampling": "解码中 · 采样中", "slots.processing": "处理中", "slots.prefilling": "预填充中", "slots.waiting": "等待调度", "slots.unavailable": "槽状态不可用",
-    "gpu.utilization": "利用率", "gpu.memory": "显存", "gpu.power": "功耗", "gpu.clock": "SM 时钟", "gpu.unavailable": "GPU 状态不可用",
+    "slots.title": "执行槽", "slots.description": "执行阶段、上下文占用与推测解码状态", "slots.kvUsage": "总缓存占用", "slots.kvUnavailable": "缓存占用不可用", "slots.idleCached": "空闲 · 缓存已保留", "slots.idle": "空闲", "slots.prefillingProgress": "预填充中 · {progress}%", "slots.decodingRate": "解码中 · {rate} tok/s", "slots.decodingSampling": "解码中 · 采样中", "slots.processing": "处理中", "slots.prefilling": "预填充中", "slots.waiting": "等待调度", "slots.unavailable": "槽状态不可用",
+    "gpu.utilization": "利用率", "gpu.memory": "显存", "gpu.power": "功耗", "gpu.clock": "SM 时钟", "gpu.unavailable": "GPU 状态不可用", "lan.title": "局域网连接", "lan.apiAddress": "API 地址", "lan.model": "模型名", "lan.waitingModel": "等待模型信息",
     "requests.title": "最近完成", "requests.refreshLogs": "刷新日志", "requests.request": "请求", "requests.finish": "结束", "requests.input": "输入", "requests.output": "输出", "requests.cacheHit": "缓存命中", "requests.duration": "耗时", "requests.empty": "尚无已完成请求", "requests.rawLogs": "原始服务日志", "requests.autoRefresh": "自动刷新 · 2 秒", "requests.notLoaded": "尚未加载", "requests.loading": "正在读取…", "requests.logEmpty": "日志为空",
-    "settings.title": "运行配置", "settings.configFile": "配置文件", "settings.capacity": "容量与调度", "settings.maxContext": "单请求上下文", "settings.maxContextHelp": "模型原生上限 262144", "settings.kvCapacity": "共享 KV 容量", "settings.kvCapacityHelp": "可填 auto 或 token 数", "settings.maxConcurrency": "最大并发", "settings.maxConcurrencyHelp": "有效范围 1–8", "settings.maxQueue": "排队上限", "settings.maxQueueHelp": "不占用执行槽", "settings.queueTimeout": "排队超时", "settings.milliseconds": "毫秒", "settings.prefillChunk": "预填充分块", "settings.prefillChunkHelp": "128 的倍数", "settings.precision": "精度与生成", "settings.kvType": "KV 类型", "settings.kvTypeHelp": "上下文精度与容量", "settings.specDecode": "推测解码", "settings.specDecodeHelp": "当前模型支持 MTP", "settings.draftHelp": "MTP 有效范围 1–5", "settings.defaultOutput": "默认最大输出", "settings.defaultOutputHelp": "请求未指定时使用", "settings.statsInterval": "统计周期", "settings.statsIntervalHelp": "毫秒，0 表示关闭", "settings.optimizeDraft": "优化 Draft Head", "settings.vision": "图片 / 视频", "settings.preserveThinking": "保留历史思考", "settings.defaultThinking": "默认开启思考", "settings.prefixReuse": "缓存复用", "settings.restore": "恢复当前文件", "settings.preview": "预览变更", "settings.changePreview": "变更预览", "settings.noAutoRestart": "写入不会自动重启服务", "settings.previewHint": "调整参数后点击“预览变更”", "settings.writeCompose": "写入 compose.yaml", "settings.noChanges": "没有变更", "settings.previewReady": "预览已生成，运行服务尚未改变", "settings.configUnchanged": "配置没有变化", "settings.applied": "配置已写入；运行中的服务尚未改变", "settings.applyTitle": "写入启动配置", "settings.applyMessage": "这会修改 compose.yaml 并生成备份，但不会重启正在工作的 NInfer 服务。", "settings.applyButton": "写入配置",
+    "settings.title": "运行配置", "settings.configFile": "配置文件", "settings.capacity": "容量与调度", "settings.maxContext": "单请求上下文", "settings.maxContextHelp": "模型原生上限 262144", "settings.kvCapacity": "共享 KV 容量", "settings.kvCapacityHelp": "可填 auto 或 token 数", "settings.maxConcurrency": "最大并发", "settings.maxConcurrencyHelp": "有效范围 1–8", "settings.maxQueue": "排队上限", "settings.maxQueueHelp": "不占用执行槽", "settings.queueTimeout": "排队超时", "settings.milliseconds": "毫秒", "settings.prefillChunk": "预填充分块", "settings.prefillChunkHelp": "128 的倍数", "settings.precision": "精度与生成", "settings.kvType": "KV 类型", "settings.kvTypeHelp": "上下文精度与容量", "settings.specDecode": "推测解码", "settings.specDecodeHelp": "当前模型支持 MTP", "settings.draftHelp": "MTP 有效范围 1–5", "settings.defaultOutput": "默认最大输出", "settings.defaultOutputHelp": "请求未指定时使用", "settings.statsInterval": "统计周期", "settings.statsIntervalHelp": "毫秒，0 表示关闭", "settings.reasoningEffort": "思考等级", "settings.reasoningEffortHelp": "Qwen3.8 默认思考强度", "settings.reasoningOff": "关闭", "settings.reasoningLow": "低", "settings.reasoningMedium": "中", "settings.reasoningHigh": "高", "settings.optimizeDraft": "优化 Draft Head", "settings.vision": "图片 / 视频", "settings.preserveThinking": "保留历史思考", "settings.prefixReuse": "缓存复用", "settings.restore": "恢复当前文件", "settings.preview": "预览变更", "settings.changePreview": "变更预览", "settings.noAutoRestart": "修改配置需写入 compose.yaml 并重启后生效", "settings.previewHint": "调整参数后点击“预览变更”", "settings.writeCompose": "写入 compose.yaml", "settings.noChanges": "没有变更", "settings.previewReady": "预览已生成，运行服务尚未改变", "settings.configUnchanged": "配置没有变化", "settings.applied": "配置已写入；运行中的服务尚未改变", "settings.applyTitle": "写入启动配置", "settings.applyMessage": "这会修改 compose.yaml 并生成备份，但不会重启正在工作的 NInfer 服务。", "settings.applyButton": "写入配置",
     "service.controls": "NInfer 服务控制", "service.start": "启动 NInfer", "service.stop": "停止 NInfer", "service.restart": "重启 NInfer", "service.restarting": "正在重启…", "service.starting": "正在启动…", "service.stopping": "正在停止…", "service.restartTitle": "重启 NInfer", "service.restartMessage": "正在运行的推理请求会中断。UI 将重建容器并等待模型健康检查通过。", "service.restartConfirm": "确认重启", "service.restarted": "NInfer 已重启并通过健康检查", "service.started": "NInfer 已启动并通过健康检查", "service.stopTitle": "停止 NInfer", "service.stopMessage": "正在运行和排队的推理请求都会中断。UI 本身会继续运行，可随时重新启动 NInfer。", "service.stopConfirm": "确认停止", "service.stopped": "NInfer 已停止",
     "history.title": "历史数据管理", "history.retention": "5 分钟级“均值 + 峰值”历史保存在本机 SQLite 数据库中，打开网页、重启 UI 或启停 NInfer 都会继续读取；保留最近 400 天，超过后自动清理。", "history.startDate": "开始日期", "history.endDate": "结束日期", "history.clearRange": "清除日期段数据", "history.invalidDate": "请选择有效日期", "history.endBeforeStart": "结束日期不能早于开始日期", "history.clearTitle": "清除历史数据", "history.clearMessage": "将永久删除 {start} 至 {end}（含首尾日期）的全部吞吐历史，删除后无法恢复。当前日期之后产生的新样本仍会继续记录。", "history.clearConfirm": "确认删除", "history.clearing": "正在清除…", "history.cleared": "已清除 {count} 个长期记录桶",
     "confirm.title": "确认操作", "confirm.enter": "输入", "confirm.continue": "继续",
@@ -31,10 +31,10 @@ const I18N = {
     "metric.requestsTotal": "Total requests", "metric.outputTotal": "Total output", "metric.inputTotal": "Total input", "metric.aggregateDecode": "Aggregate decode", "metric.waitingThroughput": "Waiting for the first throughput interval", "metric.prefill": "Prefill", "metric.decode": "Decode", "metric.runningQueued": "Running / queued", "metric.mtpAcceptance": "MTP acceptance", "metric.cumulative": "Cumulative", "metric.cacheHitRate": "Cache hit rate",
     "overview.model": "{model} · {context} context · Vision: {vision}", "common.on": "On", "overview.window": "{seconds}s window · {batch} avg batch", "overview.noActivity": "No generation activity",
     "trend.title": "Throughput trend", "trend.defaultWindow": "Two-second server execution window", "trend.range": "Throughput time range", "trend.realtime": "Live", "trend.day": "Day", "trend.week": "Week", "trend.month": "Month", "trend.previous": "Previous period", "trend.next": "Next period", "trend.chart": "Throughput trend chart", "trend.realtimeLabel": "Last 5 minutes · 2-second samples", "trend.dayLabel": "Calendar day · 5-minute peak-preserving", "trend.weekLabel": "Calendar week · 30-minute peak-preserving", "trend.monthLabel": "Calendar month · 2-hour peak-preserving", "trend.lastFiveMinutes": "Last 5 minutes", "trend.previousNamed": "Previous {period}", "trend.nextNamed": "Next {period}", "trend.period": "period", "trend.loadFailed": "Failed to load throughput history: {message}",
-    "slots.title": "Execution slots", "slots.description": "Execution stage, context usage, and speculative decoding state", "slots.idleCached": "Idle · prefix retained", "slots.idle": "Idle", "slots.prefillingProgress": "Prefilling · {progress}%", "slots.decodingRate": "Decoding · {rate} tok/s", "slots.decodingSampling": "Decoding · sampling", "slots.processing": "Processing", "slots.prefilling": "Prefilling", "slots.waiting": "Waiting for scheduler", "slots.unavailable": "Slot status unavailable",
-    "gpu.utilization": "Utilization", "gpu.memory": "VRAM", "gpu.power": "Power", "gpu.clock": "SM clock", "gpu.unavailable": "GPU status unavailable",
+    "slots.title": "Execution slots", "slots.description": "Execution stage, context usage, and speculative decoding state", "slots.kvUsage": "Total KV cache usage", "slots.kvUnavailable": "Cache usage unavailable", "slots.idleCached": "Idle · prefix retained", "slots.idle": "Idle", "slots.prefillingProgress": "Prefilling · {progress}%", "slots.decodingRate": "Decoding · {rate} tok/s", "slots.decodingSampling": "Decoding · sampling", "slots.processing": "Processing", "slots.prefilling": "Prefilling", "slots.waiting": "Waiting for scheduler", "slots.unavailable": "Slot status unavailable",
+    "gpu.utilization": "Utilization", "gpu.memory": "VRAM", "gpu.power": "Power", "gpu.clock": "SM clock", "gpu.unavailable": "GPU status unavailable", "lan.title": "LAN connection", "lan.apiAddress": "API address", "lan.model": "Model", "lan.waitingModel": "Waiting for model information",
     "requests.title": "Recently completed", "requests.refreshLogs": "Refresh logs", "requests.request": "Request", "requests.finish": "Finish", "requests.input": "Input", "requests.output": "Output", "requests.cacheHit": "Cache hit", "requests.duration": "Duration", "requests.empty": "No completed requests", "requests.rawLogs": "Raw service logs", "requests.autoRefresh": "Auto-refresh · 2 seconds", "requests.notLoaded": "Not loaded", "requests.loading": "Loading…", "requests.logEmpty": "Log is empty",
-    "settings.title": "Runtime settings", "settings.configFile": "Config file", "settings.capacity": "Capacity and scheduling", "settings.maxContext": "Per-request context", "settings.maxContextHelp": "Model-native maximum: 262144", "settings.kvCapacity": "Shared KV capacity", "settings.kvCapacityHelp": "Enter auto or a token count", "settings.maxConcurrency": "Maximum concurrency", "settings.maxConcurrencyHelp": "Valid range: 1–8", "settings.maxQueue": "Queue limit", "settings.maxQueueHelp": "Does not occupy execution slots", "settings.queueTimeout": "Queue timeout", "settings.milliseconds": "Milliseconds", "settings.prefillChunk": "Prefill chunk", "settings.prefillChunkHelp": "Must be a multiple of 128", "settings.precision": "Precision and generation", "settings.kvType": "KV type", "settings.kvTypeHelp": "Context precision and capacity", "settings.specDecode": "Speculative decoding", "settings.specDecodeHelp": "The current model supports MTP", "settings.draftHelp": "MTP valid range: 1–5", "settings.defaultOutput": "Default maximum output", "settings.defaultOutputHelp": "Used when the request does not specify one", "settings.statsInterval": "Statistics interval", "settings.statsIntervalHelp": "Milliseconds; 0 disables it", "settings.optimizeDraft": "Optimize Draft Head", "settings.vision": "Image / video", "settings.preserveThinking": "Preserve thinking history", "settings.defaultThinking": "Enable thinking by default", "settings.prefixReuse": "Prefix reuse", "settings.restore": "Restore current file", "settings.preview": "Preview changes", "settings.changePreview": "Change preview", "settings.noAutoRestart": "Writing does not restart the service", "settings.previewHint": "Adjust parameters, then select “Preview changes”", "settings.writeCompose": "Write compose.yaml", "settings.noChanges": "No changes", "settings.previewReady": "Preview ready; the running service is unchanged", "settings.configUnchanged": "Configuration is unchanged", "settings.applied": "Configuration written; the running service is unchanged", "settings.applyTitle": "Write startup configuration", "settings.applyMessage": "This modifies compose.yaml and creates a backup, but does not restart the running NInfer service.", "settings.applyButton": "Write configuration",
+    "settings.title": "Runtime settings", "settings.configFile": "Config file", "settings.capacity": "Capacity and scheduling", "settings.maxContext": "Per-request context", "settings.maxContextHelp": "Model-native maximum: 262144", "settings.kvCapacity": "Shared KV capacity", "settings.kvCapacityHelp": "Enter auto or a token count", "settings.maxConcurrency": "Maximum concurrency", "settings.maxConcurrencyHelp": "Valid range: 1–8", "settings.maxQueue": "Queue limit", "settings.maxQueueHelp": "Does not occupy execution slots", "settings.queueTimeout": "Queue timeout", "settings.milliseconds": "Milliseconds", "settings.prefillChunk": "Prefill chunk", "settings.prefillChunkHelp": "Must be a multiple of 128", "settings.precision": "Precision and generation", "settings.kvType": "KV type", "settings.kvTypeHelp": "Context precision and capacity", "settings.specDecode": "Speculative decoding", "settings.specDecodeHelp": "The current model supports MTP", "settings.draftHelp": "MTP valid range: 1–5", "settings.defaultOutput": "Default maximum output", "settings.defaultOutputHelp": "Used when the request does not specify one", "settings.statsInterval": "Statistics interval", "settings.statsIntervalHelp": "Milliseconds; 0 disables it", "settings.reasoningEffort": "Reasoning level", "settings.reasoningEffortHelp": "Default Qwen3.8 reasoning effort", "settings.reasoningOff": "Off", "settings.reasoningLow": "Low", "settings.reasoningMedium": "Medium", "settings.reasoningHigh": "High", "settings.optimizeDraft": "Optimize Draft Head", "settings.vision": "Image / video", "settings.preserveThinking": "Preserve thinking history", "settings.prefixReuse": "Prefix reuse", "settings.restore": "Restore current file", "settings.preview": "Preview changes", "settings.changePreview": "Change preview", "settings.noAutoRestart": "Configuration changes take effect after writing compose.yaml and restarting", "settings.previewHint": "Adjust parameters, then select “Preview changes”", "settings.writeCompose": "Write compose.yaml", "settings.noChanges": "No changes", "settings.previewReady": "Preview ready; the running service is unchanged", "settings.configUnchanged": "Configuration is unchanged", "settings.applied": "Configuration written; the running service is unchanged", "settings.applyTitle": "Write startup configuration", "settings.applyMessage": "This modifies compose.yaml and creates a backup, but does not restart the running NInfer service.", "settings.applyButton": "Write configuration",
     "service.controls": "NInfer service controls", "service.start": "Start NInfer", "service.stop": "Stop NInfer", "service.restart": "Restart NInfer", "service.restarting": "Restarting…", "service.starting": "Starting…", "service.stopping": "Stopping…", "service.restartTitle": "Restart NInfer", "service.restartMessage": "Running inference requests will be interrupted. The UI will recreate the container and wait for the model health check.", "service.restartConfirm": "Restart", "service.restarted": "NInfer restarted and passed its health check", "service.started": "NInfer started and passed its health check", "service.stopTitle": "Stop NInfer", "service.stopMessage": "Running and queued inference requests will be interrupted. The UI will remain available so NInfer can be started again.", "service.stopConfirm": "Stop", "service.stopped": "NInfer stopped",
     "history.title": "History management", "history.retention": "Five-minute average + peak history is stored in a local SQLite database and remains available after reopening the page, restarting the UI, or stopping and starting NInfer. The latest 400 days are retained; older records are removed automatically.", "history.startDate": "Start date", "history.endDate": "End date", "history.clearRange": "Clear date range", "history.invalidDate": "Select a valid date", "history.endBeforeStart": "The end date cannot be earlier than the start date", "history.clearTitle": "Clear history", "history.clearMessage": "This permanently deletes all throughput history from {start} through {end}, inclusive. This cannot be undone. New samples generated afterward will continue to be recorded.", "history.clearConfirm": "Delete", "history.clearing": "Clearing…", "history.cleared": "Cleared {count} long-term history buckets",
     "confirm.title": "Confirm action", "confirm.enter": "Enter", "confirm.continue": "to continue",
@@ -126,6 +126,41 @@ function number(value, digits = 0) {
 function compact(value) {
   if (value === null || value === undefined) return "—";
   return new Intl.NumberFormat(formatLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(Number(value));
+}
+
+function kvCacheUsage(usedValue, capacityValue) {
+  const used = Number(usedValue);
+  const capacity = Number(capacityValue);
+  if (!Number.isFinite(used) || !Number.isFinite(capacity) || capacity <= 0 || used < 0 || used > capacity) return null;
+  return { used, capacity, percent: (used / capacity) * 100 };
+}
+
+function slotKvUsage(slot) {
+  const used = Number(slot?.n_kv_tokens ?? slot?.n_prompt_tokens);
+  const capacity = Number(slot?.n_ctx);
+  if (!Number.isFinite(used) || !Number.isFinite(capacity) || capacity <= 0 || used < 0 || used > capacity) return null;
+  return { used, capacity, percent: (used / capacity) * 100 };
+}
+
+function updateKvCache(metrics) {
+  const usage = kvCacheUsage(
+    metric(metrics, "ninfer:kv_cache_used_tokens", Number.NaN),
+    metric(metrics, "ninfer:kv_cache_capacity_tokens", Number.NaN),
+  );
+  const meter = $("#kv-cache-meter");
+  const fill = $("#kv-cache-meter-fill");
+  if (!usage) {
+    $("#kv-cache-value").textContent = t("slots.kvUnavailable");
+    fill.style.width = "0%";
+    meter.removeAttribute("aria-valuenow");
+    meter.setAttribute("aria-valuetext", t("slots.kvUnavailable"));
+    return;
+  }
+  const value = `${number(usage.used)} / ${number(usage.capacity)} · ${number(usage.percent, 1)}%`;
+  $("#kv-cache-value").textContent = value;
+  fill.style.width = `${usage.percent}%`;
+  meter.setAttribute("aria-valuenow", usage.percent.toFixed(1));
+  meter.setAttribute("aria-valuetext", value);
 }
 
 function metric(metrics, name, fallback = 0) {
@@ -290,6 +325,7 @@ function updateOverview(snapshot) {
   $("#overview-request-total").textContent = requestTotal;
   $("#overview-output-total").textContent = outputTotal;
   $("#overview-prompt-total").textContent = promptTotal;
+  updateKvCache(metrics);
 
   updateSlots(
     snapshot.slots || [],
@@ -297,7 +333,7 @@ function updateOverview(snapshot) {
     snapshot.timestamp_ms,
     snapshot.container?.started_at || "",
   );
-  updateGpu(snapshot.gpu || {});
+  updateGpu(snapshot.gpu || {}, snapshot.lan_api_url || snapshot.target, model);
   updateRequests(snapshot.recent_requests || []);
 }
 
@@ -347,7 +383,8 @@ function calculateSlotDecodeRates(previousSamples, slots, timestampMs, serviceIn
 }
 
 function slotStage(slot, index, throughput, slotRate = null) {
-  if (!slot.is_processing) return t(slot.n_prompt_tokens > 0 ? "slots.idleCached" : "slots.idle");
+  const residentKv = Number(slot.n_kv_tokens ?? slot.n_prompt_tokens);
+  if (!slot.is_processing) return t(residentKv > 0 ? "slots.idleCached" : "slots.idle");
   if (slot.state === "prefill") {
     const progress = slot.n_prompt_tokens > 0
       ? Math.min(100, Math.max(0, (slot.n_prompt_tokens_processed / slot.n_prompt_tokens) * 100))
@@ -396,24 +433,38 @@ function updateSlots(slots, throughput, timestampMs, serviceInstance) {
     if (slot.is_processing) busyIndex += 1;
     const mode = slot.is_processing ? (stage === t("slots.waiting") ? "waiting" : "busy") : "idle";
     row.className = `slot-row ${mode}`;
-    const ratio = slot.n_ctx > 0 ? Math.min(100, (slot.n_prompt_tokens / slot.n_ctx) * 100) : 0;
+    const usage = slotKvUsage(slot) || { used: 0, capacity: Number(slot.n_ctx) || 0, percent: 0 };
     const status = textElement("span", "slot-state", stage);
     status.prepend(document.createElement("i"));
     const depth = textElement("span", "slot-depth", "");
     const depthMeter = document.createElement("i");
-    depthMeter.style.width = `${ratio}%`;
+    depthMeter.style.width = `${usage.percent}%`;
     depth.append(depthMeter);
     row.append(
       textElement("span", "slot-id", `SLOT ${slot.id}`),
       status,
       depth,
-      textElement("span", "slot-tokens", `${number(slot.n_prompt_tokens)} / ${compact(slot.n_ctx)}`),
+      textElement("span", "slot-tokens", `${number(usage.used)} / ${compact(usage.capacity)}`),
     );
     host.append(row);
   }
 }
 
-function updateGpu(gpu) {
+function lanApiAddress(target, browserHostname) {
+  try {
+    const address = new URL("/v1", target);
+    if (browserHostname) address.hostname = browserHostname;
+    return address.toString().replace(/\/$/, "");
+  } catch {
+    return "—";
+  }
+}
+
+function updateGpu(gpu, target, model) {
+  const browserHostname = typeof window === "undefined" ? "" : window.location.hostname;
+  const useBrowserHostname = !target || ["127.0.0.1", "localhost", "::1"].includes(new URL(target).hostname);
+  $("#lan-api-address").textContent = lanApiAddress(target, useBrowserHostname ? browserHostname : "");
+  $("#lan-model-name").textContent = model?.id || t("lan.waitingModel");
   if (!gpu.available) {
     $("#gpu-name").textContent = gpu.error || t("gpu.unavailable");
     return;
@@ -856,7 +907,7 @@ const CONFIG_NUMBER_FIELDS = new Set([
   "prefill_chunk", "draft_tokens", "log_stats_interval_ms", "default_max_tokens",
 ]);
 const CONFIG_BOOL_FIELDS = new Set([
-  "lm_head_draft", "vision", "preserve_thinking", "thinking", "prefix_reuse", "cuda_graph",
+  "lm_head_draft", "vision", "preserve_thinking", "prefix_reuse", "cuda_graph",
 ]);
 
 function populateConfig(config) {
@@ -928,30 +979,62 @@ function syncSpecFields() {
   if (off) form.elements.lm_head_draft.checked = false;
 }
 
+function confirmationState(phrase = "") {
+  const phraseRequired = Boolean(phrase);
+  return {
+    phraseRequired,
+    inputHidden: !phraseRequired,
+    confirmDisabled: phraseRequired,
+  };
+}
+
+function serviceConfirmationOptions(action) {
+  if (action === "restart") {
+    return {
+      titleKey: "service.restartTitle",
+      messageKey: "service.restartMessage",
+      buttonKey: "service.restartConfirm",
+      confirmation: "RESTART NINFER",
+    };
+  }
+  if (action === "stop") {
+    return {
+      titleKey: "service.stopTitle",
+      messageKey: "service.stopMessage",
+      buttonKey: "service.stopConfirm",
+      confirmation: "STOP NINFER",
+    };
+  }
+  throw new Error(`Unsupported service confirmation action: ${action}`);
+}
+
 function renderConfirmContext() {
   const context = state.confirmContext;
   if (!context) return;
+  const presentation = confirmationState(context.phrase);
   $("#confirm-title").textContent = t(context.titleKey, context.values);
   $("#confirm-message").textContent = t(context.messageKey, context.values);
   $("#confirm-phrase").textContent = context.phrase;
+  $("#confirm-phrase-row").hidden = presentation.inputHidden;
   $("#confirm-submit").textContent = t(context.buttonKey);
 }
 
 function confirmAction({
-  titleKey, messageKey, phrase, buttonKey = "common.confirm", values = {},
+  titleKey, messageKey, phrase = "", buttonKey = "common.confirm", values = {},
 }) {
   const dialog = $("#confirm-dialog");
   dialog.returnValue = "";
   state.confirmContext = { titleKey, messageKey, phrase, buttonKey, values };
   renderConfirmContext();
   $("#confirm-input").value = "";
-  $("#confirm-submit").disabled = true;
+  $("#confirm-submit").disabled = confirmationState(phrase).confirmDisabled;
   dialog.showModal();
-  $("#confirm-input").focus();
+  (phrase ? $("#confirm-input") : $("#confirm-submit")).focus();
   return new Promise(resolve => {
     const onClose = () => {
       dialog.removeEventListener("close", onClose);
-      const confirmed = dialog.returnValue === "confirm" && $("#confirm-input").value === phrase;
+      const confirmed = dialog.returnValue === "confirm" &&
+        (!phrase || $("#confirm-input").value === phrase);
       state.confirmContext = null;
       resolve(confirmed);
     };
@@ -985,12 +1068,8 @@ async function applyConfig() {
 }
 
 async function restartService() {
-  const confirmed = await confirmAction({
-    titleKey: "service.restartTitle",
-    messageKey: "service.restartMessage",
-    phrase: "RESTART NINFER",
-    buttonKey: "service.restartConfirm",
-  });
+  const action = serviceConfirmationOptions("restart");
+  const confirmed = await confirmAction(action);
   if (!confirmed) return;
   state.serviceControlBusy = true;
   state.serviceAction = "restart";
@@ -1000,7 +1079,7 @@ async function restartService() {
   try {
     await api("/api/restart", {
       method: "POST",
-      body: JSON.stringify({ confirmation: "RESTART NINFER" }),
+      body: JSON.stringify({ confirmation: action.confirmation }),
     });
     toast(t("service.restarted"));
     await refreshSnapshot(true);
@@ -1038,12 +1117,8 @@ async function startService() {
 }
 
 async function stopService() {
-  const confirmed = await confirmAction({
-    titleKey: "service.stopTitle",
-    messageKey: "service.stopMessage",
-    phrase: "STOP NINFER",
-    buttonKey: "service.stopConfirm",
-  });
+  const action = serviceConfirmationOptions("stop");
+  const confirmed = await confirmAction(action);
   if (!confirmed) return;
   state.serviceControlBusy = true;
   state.serviceAction = "stop";
@@ -1053,7 +1128,7 @@ async function stopService() {
   try {
     await api("/api/stop", {
       method: "POST",
-      body: JSON.stringify({ confirmation: "STOP NINFER" }),
+      body: JSON.stringify({ confirmation: action.confirmation }),
     });
     toast(t("service.stopped"));
     await refreshSnapshot(true);
@@ -1249,13 +1324,18 @@ if (typeof module !== "undefined") {
     I18N,
     calculateSlotDecodeRates,
     chartGeometry,
+    confirmationState,
     historyAxisTicks,
     historyDeleteRange,
+    kvCacheUsage,
+    lanApiAddress,
     languageFromPreferences,
     localizeApiError,
     nearestHistorySample,
     resolveLocale,
+    serviceConfirmationOptions,
     setLanguageMode,
+    slotKvUsage,
     slotStage,
     t,
   };

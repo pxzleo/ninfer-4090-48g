@@ -8,7 +8,8 @@
 // against prefill wall time, committed decode tokens against decode wall
 // time - so scrapers that difference llama.cpp counters read this server
 // without changes. The ninfer:-prefixed series report what llama.cpp cannot:
-// speculative draft/acceptance totals and prefix-cache reuse.
+// speculative draft/acceptance totals, prefix-cache reuse, and the current
+// page-aligned Main KV occupancy/capacity.
 
 #include "serve/generation_service.h"
 
@@ -38,11 +39,8 @@ public:
     // request-done log line, so every protocol and both streaming modes count.
     void record(const GenerationOutcome& outcome);
 
-    // Prompt/cache sizes of the most recent completed request, retained for
-    // /slots. llama.cpp keeps the last request's counts on an idle slot and
-    // scrapers (the fleet dashboard) read them as the resident session
-    // depth; the prefix cache genuinely still holds that session, so the
-    // retained figure stays truthful until the next completion replaces it.
+    // Prompt/cache sizes of the most recent completed request, retained for compatibility tests
+    // and consumers which still need request-level residue rather than physical KV occupancy.
     struct LastCompleted {
         int prompt_tokens = 0;
         int cached_tokens = 0;
@@ -52,7 +50,8 @@ public:
     // One complete Prometheus text body, without HTTP framing. In-flight
     // requests are split into processing/deferred against `max_concurrency`,
     // matching the FIFO scheduler's work-conserving behavior.
-    [[nodiscard]] std::string render(std::uint32_t max_concurrency) const;
+    [[nodiscard]] std::string render(std::uint32_t max_concurrency,
+                                     const RuntimeStats& runtime) const;
 
 private:
     mutable std::mutex mutex_;

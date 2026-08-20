@@ -9,10 +9,56 @@ UI_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(UI_ROOT))
 
 import server as server_module  # noqa: E402
-from server import host_name, latest_throughput, request_events  # noqa: E402
+from server import host_name, lan_api_url, latest_throughput, request_events  # noqa: E402
 
 
 class RequestEventsTest(unittest.TestCase):
+    @patch.object(server_module, "LAN_API_OVERRIDE", "http://192.168.100.149:8080/v1")
+    def test_lan_api_override_is_used_verbatim(self) -> None:
+        self.assertEqual(lan_api_url(), "http://192.168.100.149:8080/v1")
+
+    @patch.object(server_module, "LAN_API_OVERRIDE", "not-an-address")
+    def test_lan_api_override_rejects_invalid_url(self) -> None:
+        with self.assertRaisesRegex(ValueError, "有效"):
+            lan_api_url()
+
+    def test_slot_kv_sum_reconciles_snapshot_total(self) -> None:
+        metrics = {
+            "ninfer:kv_cache_used_tokens": 999.0,
+            "ninfer:kv_cache_capacity_tokens": 524288.0,
+        }
+        slots = [
+            {"id": 0, "is_processing": True, "n_kv_tokens": 194112},
+            {"id": 1, "is_processing": False, "n_kv_tokens": 237120},
+        ]
+
+        server_module.reconcile_slot_kv_usage(metrics, slots)
+
+        self.assertEqual(metrics["ninfer:kv_cache_used_tokens"], 431232.0)
+
+    def test_old_slots_keep_pool_total(self) -> None:
+        metrics = {"ninfer:kv_cache_used_tokens": 431232.0}
+
+        server_module.reconcile_slot_kv_usage(
+            metrics, [{"id": 0, "n_prompt_tokens": 193848}]
+        )
+
+        self.assertEqual(metrics["ninfer:kv_cache_used_tokens"], 431232.0)
+
+    def test_slot_kv_sum_rejects_invalid_values(self) -> None:
+        metrics = {"ninfer:kv_cache_capacity_tokens": 524288.0}
+        with self.assertRaisesRegex(ValueError, "无效"):
+            server_module.reconcile_slot_kv_usage(
+                metrics, [{"id": 0, "n_kv_tokens": -64}]
+            )
+
+    def test_slot_kv_sum_rejects_capacity_overflow(self) -> None:
+        metrics = {"ninfer:kv_cache_capacity_tokens": 64.0}
+        with self.assertRaisesRegex(ValueError, "超过"):
+            server_module.reconcile_slot_kv_usage(
+                metrics, [{"id": 0, "n_kv_tokens": 128}]
+            )
+
     def test_parses_nanosecond_docker_timestamp(self) -> None:
         line = (
             "2026-08-19T08:07:57.371626300Z [info] throughput interval=2.000s "

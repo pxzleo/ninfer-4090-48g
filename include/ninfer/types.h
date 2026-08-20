@@ -400,12 +400,20 @@ struct MemorySummary {
     std::size_t kv_payload_bytes                  = 0;
 };
 
+struct KvCacheUsage {
+    // Physical Main Text KV occupancy is page-aligned and includes retained prefixes.
+    std::uint32_t used_tokens     = 0;
+    std::uint32_t capacity_tokens = 0;
+};
+
 struct RuntimeSlotStats {
     std::uint64_t request_id              = 0;
     std::uint32_t prompt_tokens           = 0;
     std::uint32_t reusable_prompt_tokens  = 0;
     std::uint32_t processed_prompt_tokens = 0;
     std::uint32_t generated_tokens        = 0;
+    // Physical Main Text KV occupancy for this lane, aligned to the cache page size.
+    std::uint32_t resident_kv_tokens      = 0;
     bool active                           = false;
     bool prefilling                       = false;
     bool decode_ready                     = false;
@@ -425,6 +433,7 @@ struct RuntimeStats {
     std::uint32_t prefilling_requests   = 0;
     std::uint32_t decode_ready_requests = 0;
     std::uint32_t waiting_requests      = 0;
+    KvCacheUsage kv_cache;
     std::array<RuntimeSlotStats, kMaximumConcurrency> slots{};
 };
 

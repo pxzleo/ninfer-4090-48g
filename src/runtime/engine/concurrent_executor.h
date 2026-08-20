@@ -55,6 +55,7 @@ public:
             admission_capacity_.main_kv_pages == 0) {
             throw std::logic_error("target admission capacity does not match the Engine");
         }
+        publish_runtime_stats();
         worker_ = std::thread([this] { worker_loop(); });
     }
 
@@ -202,13 +203,19 @@ private:
     void publish_runtime_stats() {
         RuntimeStats snapshot = cumulative_stats_;
         snapshot.slots        = {};
+        snapshot.kv_cache     = instance_.program->main_kv_cache_usage();
         {
             std::lock_guard lock(queue_mutex_);
             snapshot.waiting_requests = static_cast<std::uint32_t>(pending_.size());
         }
         snapshot.prefilling_requests = prefill_lane_.has_value() ? 1U : 0U;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
-            if (slots_[lane] == nullptr) { continue; }
+            const std::uint32_t resident_kv_tokens =
+                instance_.program->main_kv_cache_tokens_lane(lane);
+            if (slots_[lane] == nullptr) {
+                snapshot.slots[lane].resident_kv_tokens = resident_kv_tokens;
+                continue;
+            }
             const auto& request = slots_[lane];
             ++snapshot.running_requests;
             if (request->decode_ready) { ++snapshot.decode_ready_requests; }
@@ -218,6 +225,7 @@ private:
                 .reusable_prompt_tokens  = request->reusable_prompt_tokens,
                 .processed_prompt_tokens = request->processed_prompt_tokens,
                 .generated_tokens        = static_cast<std::uint32_t>(request->generated.size()),
+                .resident_kv_tokens      = resident_kv_tokens,
                 .active                  = true,
                 .prefilling              = prefill_lane_ && *prefill_lane_ == lane,
                 .decode_ready             = request->decode_ready,

@@ -118,10 +118,13 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
                                                  const ninfer::PromptCapabilities& capabilities) {
     ResolvedPromptSemantics result{
         .enable_thinking   = request.enable_thinking.value_or(server.enable_thinking),
-        .reasoning_effort  = std::nullopt,
+        .reasoning_effort  = server.reasoning_effort,
         .preserve_thinking = request.preserve_thinking.value_or(server.preserve_thinking),
     };
-    if (!request.reasoning_effort) { return result; }
+    if (!request.reasoning_effort) {
+        if (!result.enable_thinking) { result.reasoning_effort.reset(); }
+        return result;
+    }
 
     const RequestedReasoningEffort requested = *request.reasoning_effort;
     const bool enables_thinking              = requested != RequestedReasoningEffort::None;
@@ -132,6 +135,7 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
     result.enable_thinking = enables_thinking;
 
     if (requested == RequestedReasoningEffort::None) {
+        result.reasoning_effort.reset();
         if (!capabilities.enable_thinking) {
             invalid_prompt_option("the loaded chat template cannot disable thinking",
                                   request.reasoning_effort_param, "reasoning_effort_not_supported");

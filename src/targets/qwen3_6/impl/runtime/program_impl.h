@@ -2163,6 +2163,19 @@ void ProgramImplCore::resolve_non_speculative_pending(SequenceState& sequence,
     request.pending   = {};
 }
 
+std::uint32_t ProgramImplCore::main_kv_cache_tokens_lane(std::uint32_t lane) const noexcept {
+    if (lane >= max_concurrency || !sequences[lane].kv) { return 0; }
+    return sequences[lane].kv->text.mapped_token_capacity();
+}
+
+KvCacheUsage ProgramImplCore::main_kv_cache_usage() const noexcept {
+    const PagedKVPool& pool = decoder->text_kv.pool();
+    return KvCacheUsage{
+        .used_tokens = pool.mapped_pages() * static_cast<std::uint32_t>(kPagedKVPageSize),
+        .capacity_tokens = kv_capacity,
+    };
+}
+
 MemorySummary ProgramImplCore::memory_summary() const noexcept {
     MemorySummary out;
     out.device      = device.device;

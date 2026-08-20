@@ -222,6 +222,8 @@ public:
     [[nodiscard]] GenerationTimings generation_timings_lane(std::uint32_t lane) const noexcept;
     [[nodiscard]] SpeculativeStats speculative_stats_lane(std::uint32_t lane) const noexcept;
 
+    [[nodiscard]] std::uint32_t main_kv_cache_tokens_lane(std::uint32_t lane) const noexcept;
+    [[nodiscard]] KvCacheUsage main_kv_cache_usage() const noexcept;
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
 
     void reset_memory_peaks() noexcept;

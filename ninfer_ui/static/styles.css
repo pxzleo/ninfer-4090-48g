@@ -239,6 +239,13 @@ main { padding: clamp(30px, 4vw, 64px); }
 
 .operations-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, .75fr); gap: clamp(38px, 6vw, 90px); padding-top: 38px; }
 .quiet-badge { padding: 6px 8px; color: var(--muted); border: 1px solid var(--line); font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+.slot-heading-status { display: flex; align-items: flex-start; gap: 18px; }
+.kv-usage { width: clamp(230px, 25vw, 310px); display: grid; gap: 7px; }
+.kv-usage-copy { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; }
+.kv-usage-copy span { color: var(--quiet); font-size: 10px; }
+.kv-usage-copy strong { color: var(--muted); font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.kv-meter { height: 3px; overflow: hidden; background: var(--line-soft); }
+.kv-meter i { display: block; width: 0; height: 100%; background: var(--accent); box-shadow: 0 0 7px rgba(118,240,189,.3); transition: width .45s ease; }
 .slot-list { border-top: 1px solid var(--line); }
 .slot-row { display: grid; grid-template-columns: 52px 190px minmax(130px, 1fr) 120px; align-items: center; gap: 20px; min-height: 58px; border-bottom: 1px solid var(--line-soft); }
 .slot-id { color: var(--quiet); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -264,6 +271,12 @@ main { padding: clamp(30px, 4vw, 64px); }
 .gpu-details strong { font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meter { height: 3px; margin-top: -7px; overflow: hidden; background: var(--line-soft); }
 .meter i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .45s ease; }
+.lan-connection { display: grid; gap: 10px; margin-top: 25px; padding-top: 18px; border-top: 1px solid var(--line); }
+.lan-connection-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.lan-connection-heading i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px rgba(118,240,189,.5); }
+.lan-connection > div:not(.lan-connection-heading) { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: 11px; }
+.lan-connection > div > span { color: var(--quiet); }
+.lan-connection strong { min-width: 0; color: var(--muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 
 .text-button { padding: 6px 0; border: 0; border-bottom: 1px solid var(--quiet); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
 .text-button:hover { color: var(--accent); border-color: var(--accent); }
@@ -401,6 +414,9 @@ dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
   .trend-tools .legend { grid-column: 1; }
   .range-switch { width: fit-content; }
   .chart-wrap { height: 190px; }
+  .slots-panel .panel-heading { align-items: stretch; flex-direction: column; }
+  .slot-heading-status { width: 100%; align-items: flex-end; }
+  .kv-usage { width: auto; flex: 1; }
   .slot-row { grid-template-columns: 42px 150px minmax(70px, 1fr); gap: 12px; }
   .slot-tokens { grid-column: 3; font-size: 9px; }
   .gpu-core { grid-template-columns: 120px 1fr; gap: 20px; }

@@ -47,7 +47,9 @@ int main() {
     int failures = 0;
 
     ServeMetrics metrics;
-    const auto empty = parse(metrics.render(1));
+    ninfer::RuntimeStats runtime;
+    runtime.kv_cache = {.used_tokens = 131072, .capacity_tokens = 524288};
+    const auto empty = parse(metrics.render(1, runtime));
     failures += check(empty.at("llamacpp:prompt_tokens_total") == 0.0, "starts at zero");
     const auto never = metrics.last_completed();
     failures += check(never.prompt_tokens == 0 && never.cached_tokens == 0,
@@ -60,7 +62,7 @@ int main() {
     // older one processes and the newer one is deferred.
     metrics.begin_request(7, 500);
     metrics.begin_request(8, 900);
-    const auto busy = parse(metrics.render(1));
+    const auto busy = parse(metrics.render(1, runtime));
     failures += check(busy.at("llamacpp:requests_processing") == 1.0, "one processing");
     failures += check(busy.at("llamacpp:requests_deferred") == 1.0, "one deferred");
     const auto active = metrics.active_snapshot();
@@ -69,7 +71,7 @@ int main() {
     metrics.end_request(7);
     metrics.end_request(7); // idempotent
     metrics.end_request(8);
-    const auto drained = parse(metrics.render(1));
+    const auto drained = parse(metrics.render(1, runtime));
     failures += check(drained.at("llamacpp:requests_processing") == 0.0, "drained processing");
     failures += check(drained.at("llamacpp:requests_deferred") == 0.0, "drained deferred");
 
@@ -85,7 +87,7 @@ int main() {
     failures += check(warm.prompt_tokens == 1200 && warm.cached_tokens == 900,
                       "last completed after warm request");
 
-    const auto values = parse(metrics.render(1));
+    const auto values = parse(metrics.render(1, runtime));
     failures += check(values.at("llamacpp:prompt_tokens_total") == 1300.0, "computed prefill sum");
     failures += check(values.at("llamacpp:prompt_seconds_total") == 0.6, "prefill seconds sum");
     failures += check(values.at("llamacpp:tokens_predicted_total") == 300.0, "decode tokens sum");
@@ -95,10 +97,14 @@ int main() {
     failures += check(values.at("ninfer:prefix_cache_hit_tokens_total") == 900.0, "cache hits");
     failures += check(values.at("ninfer:draft_tokens_total") == 450.0, "draft tokens");
     failures += check(values.at("ninfer:draft_accepted_tokens_total") == 225.0, "accepted tokens");
+    failures += check(values.at("ninfer:kv_cache_used_tokens") == 131072.0,
+                      "KV cache used tokens");
+    failures += check(values.at("ninfer:kv_cache_capacity_tokens") == 524288.0,
+                      "KV cache capacity tokens");
 
     // A cache hit reported larger than the prompt must clamp, not underflow.
     metrics.record(outcome(10, 50, 1, 0.0, 0.1, 0, 0));
-    const auto clamped = parse(metrics.render(1));
+    const auto clamped = parse(metrics.render(1, runtime));
     failures += check(clamped.at("llamacpp:prompt_tokens_total") == 1300.0, "underflow clamped");
     const auto residue = metrics.last_completed();
     failures += check(residue.prompt_tokens == 10 && residue.cached_tokens == 10,

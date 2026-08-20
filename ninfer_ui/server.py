@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shlex
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -33,6 +34,7 @@ CONTAINER_NAME = os.environ.get("NINFER_UI_CONTAINER", "ninfer-4090")
 SERVICE_NAME = os.environ.get("NINFER_UI_SERVICE", "ninfer")
 BACKUP_DIR = ROOT / "backups"
 HISTORY_PATH = Path(os.environ.get("NINFER_UI_HISTORY", ROOT / "history.sqlite3")).resolve()
+LAN_API_OVERRIDE = os.environ.get("NINFER_UI_LAN_API", "").strip()
 
 THROUGHPUT_RE = re.compile(
     r"throughput interval=(?P<interval>[0-9.]+)s "
@@ -96,6 +98,29 @@ def host_name(value: str) -> str:
         return urlparse(f"//{value}").hostname or ""
     except ValueError as exc:
         raise UiError(HTTPStatus.FORBIDDEN, "Host 格式无效") from exc
+
+
+def lan_api_url() -> str:
+    target = urlparse(LAN_API_OVERRIDE or NINFER_BASE)
+    if LAN_API_OVERRIDE:
+        if target.scheme not in {"http", "https"} or not target.hostname:
+            raise ValueError("NINFER_UI_LAN_API 必须是有效的 HTTP(S) 地址")
+        return LAN_API_OVERRIDE.rstrip("/")
+
+    host = ""
+    try:
+        if "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower():
+            host = socket.gethostbyname("host.docker.internal")
+        else:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("1.1.1.1", 80))
+                host = probe.getsockname()[0]
+    except (OSError, UnicodeError):
+        host = ""
+    if not host:
+        return ""
+    port = f":{target.port}" if target.port else ""
+    return f"{target.scheme}://{host}{port}/v1"
 
 
 def parse_metrics(text: str) -> dict[str, float]:
@@ -317,10 +342,27 @@ def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
     return events
 
 
+def reconcile_slot_kv_usage(metrics: dict[str, float], slots: Any) -> None:
+    """Use one /slots boundary for both per-lane and total Main KV occupancy."""
+    if not isinstance(slots, list) or not slots:
+        return
+    if any(not isinstance(slot, dict) or "n_kv_tokens" not in slot for slot in slots):
+        return
+    values = [slot["n_kv_tokens"] for slot in slots]
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in values):
+        raise ValueError("NInfer /slots 返回了无效的 n_kv_tokens")
+    used = sum(values)
+    capacity = metrics.get("ninfer:kv_cache_capacity_tokens")
+    if capacity is not None and used > capacity:
+        raise ValueError("逐槽 Main KV 占用之和超过共享缓存容量")
+    metrics["ninfer:kv_cache_used_tokens"] = float(used)
+
+
 def collect_snapshot() -> dict[str, Any]:
     result: dict[str, Any] = {
         "timestamp_ms": int(time.time() * 1000),
         "target": NINFER_BASE,
+        "lan_api_url": lan_api_url(),
         "service": {"online": False},
         "metrics": {},
         "slots": [],
@@ -335,6 +377,7 @@ def collect_snapshot() -> dict[str, Any]:
         result["service"] = {"online": fetch_json("/health").get("status") == "ok"}
         result["metrics"] = parse_metrics(fetch_text("/metrics"))
         result["slots"] = fetch_json("/slots")
+        reconcile_slot_kv_usage(result["metrics"], result["slots"])
         models = fetch_json("/v1/models")
         result["models"] = models.get("data", []) if isinstance(models, dict) else []
     except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:

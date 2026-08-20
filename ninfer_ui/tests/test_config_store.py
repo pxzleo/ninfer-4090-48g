@@ -54,11 +54,11 @@ COMPOSE = """services:
 
 
 class ConfigStoreTest(unittest.TestCase):
-    def test_round_trip_without_changes_is_exact(self) -> None:
+    def test_round_trip_materializes_default_reasoning_effort(self) -> None:
         config = parse_config(COMPOSE)
         result = preview(COMPOSE, config)
-        self.assertEqual(result.diff, "")
-        self.assertEqual(result.rendered, COMPOSE)
+        self.assertIn("--reasoning-effort\n      - xhigh", result.rendered)
+        self.assertEqual(parse_config(result.rendered)["reasoning_effort"], "xhigh")
 
     def test_updates_capacity_and_concurrency(self) -> None:
         config = parse_config(COMPOSE)
@@ -91,6 +91,41 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertNotIn("--spec", result.rendered)
         self.assertNotIn("--draft-tokens", result.rendered)
         self.assertNotIn("--lm-head-draft", result.rendered)
+
+    def test_updates_qwen38_reasoning_effort(self) -> None:
+        config = parse_config(COMPOSE)
+        self.assertEqual(config["reasoning_effort"], "xhigh")
+        config["reasoning_effort"] = "medium"
+        result = preview(COMPOSE, config)
+        self.assertIn("--reasoning-effort", result.rendered)
+        self.assertEqual(parse_config(result.rendered)["reasoning_effort"], "medium")
+
+    def test_disables_and_reenables_qwen38_reasoning(self) -> None:
+        config = parse_config(COMPOSE)
+        config["reasoning_effort"] = "none"
+        disabled = preview(COMPOSE, config)
+        self.assertIn("--no-thinking", disabled.rendered)
+        self.assertNotIn("--reasoning-effort", disabled.rendered)
+        self.assertEqual(parse_config(disabled.rendered)["reasoning_effort"], "none")
+
+        config = parse_config(disabled.rendered)
+        config["reasoning_effort"] = "low"
+        enabled = preview(disabled.rendered, config)
+        self.assertNotIn("--no-thinking", enabled.rendered)
+        self.assertIn("--reasoning-effort", enabled.rendered)
+        self.assertEqual(parse_config(enabled.rendered)["reasoning_effort"], "low")
+
+        config = parse_config(disabled.rendered)
+        config["reasoning_effort"] = "xhigh"
+        high = preview(disabled.rendered, config)
+        self.assertNotIn("--no-thinking", high.rendered)
+        self.assertIn("--reasoning-effort\n      - xhigh", high.rendered)
+        self.assertEqual(parse_config(high.rendered)["reasoning_effort"], "xhigh")
+
+    def test_rejects_conflicting_qwen38_reasoning_options(self) -> None:
+        conflicting = COMPOSE + "      - --no-thinking\n      - --reasoning-effort\n      - low\n"
+        with self.assertRaisesRegex(ConfigError, "不能与"):
+            parse_config(conflicting)
 
     def test_apply_creates_backup_and_detects_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

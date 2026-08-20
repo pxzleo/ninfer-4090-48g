@@ -63,6 +63,14 @@ KvCapacityPolicy parse_kv_capacity(const char* text) {
     return KvCapacityPolicy::explicit_capacity(static_cast<std::uint32_t>(value));
 }
 
+ReasoningEffort parse_reasoning_effort(const char* text) {
+    const std::string_view value(text);
+    if (value == "low") { return ReasoningEffort::Low; }
+    if (value == "medium") { return ReasoningEffort::Medium; }
+    if (value == "xhigh") { return ReasoningEffort::XHigh; }
+    throw std::invalid_argument("invalid reasoning-effort: " + std::string(value));
+}
+
 } // namespace
 
 std::string serve_usage_text(const char* argv0) {
@@ -76,7 +84,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--kv-dtype bf16|int8|rk8v4|rk4v4|rk4v4-e8|rk2v4-e8] [--spec mtp|dflash --draft-tokens N] "
            "[--default-max-tokens N] "
            "[--vision] [--no-cuda-graph] [--no-prefix-reuse] "
-           "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
+           "[--lm-head-draft] [--no-thinking] [--reasoning-effort low|medium|xhigh] "
+           "[--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
            "       serves OpenAI Responses/Chat Completions and Anthropic Messages endpoints\n"
@@ -209,6 +218,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.speculative.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--no-thinking") {
             options.enable_thinking = false;
+        } else if (arg == "--reasoning-effort") {
+            options.reasoning_effort = parse_reasoning_effort(require_value("--reasoning-effort"));
         } else if (arg == "--preserve-thinking") {
             options.preserve_thinking = true;
         } else if (arg == "--cors") {
@@ -264,6 +275,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.prefill_chunk == 0 || options.prefill_chunk % 128 != 0) {
         throw std::invalid_argument("--prefill-chunk must be a positive multiple of 128");
+    }
+    if (!options.enable_thinking && options.reasoning_effort) {
+        throw std::invalid_argument("--reasoning-effort cannot be combined with --no-thinking");
     }
     product::validate_speculative_cli_options(options.speculative);
     if (options.speculative.backend == SpeculativeBackend::DFlash && options.enable_vision) {

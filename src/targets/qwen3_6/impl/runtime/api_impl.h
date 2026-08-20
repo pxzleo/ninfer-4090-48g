@@ -224,6 +224,16 @@ SpeculativeStats Program<Variant>::speculative_stats_lane(std::uint32_t lane) co
 }
 
 template <>
+std::uint32_t Program<Variant>::main_kv_cache_tokens_lane(std::uint32_t lane) const noexcept {
+    return impl_->main_kv_cache_tokens_lane(lane);
+}
+
+template <>
+KvCacheUsage Program<Variant>::main_kv_cache_usage() const noexcept {
+    return impl_->main_kv_cache_usage();
+}
+
+template <>
 MemorySummary Program<Variant>::memory_summary() const noexcept {
     return impl_->memory_summary();
 }

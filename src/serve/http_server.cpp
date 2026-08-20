@@ -263,29 +263,22 @@ void HttpServer::register_routes() {
         res.set_content(nlohmann::json{{"status", "ok"}}.dump(), "application/json");
     });
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
-        res.set_content(metrics_.render(options_.max_concurrency), "text/plain; version=0.0.4");
+        res.set_content(metrics_.render(options_.max_concurrency, service_->runtime_stats()),
+                        "text/plain; version=0.0.4");
     });
-    // llama.cpp-shaped slot detail backed by the Engine's boundary-consistent
-    // runtime lanes. A fully idle table keeps the last completed request's
-    // counts on slot 0 - llama.cpp retains slot state the same way, and
-    // scrapers read it as the resident session depth, which the prefix cache
-    // genuinely still holds.
+    // llama.cpp-shaped slot detail backed by the Engine's boundary-consistent runtime lanes.
+    // n_kv_tokens is the page-aligned physical Main KV occupancy for each lane, including idle
+    // retained prefixes; its sum therefore uses the same accounting as the pool-level metric.
     server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
         const auto runtime = service_->runtime_stats();
-        const auto last    = metrics_.last_completed();
         const bool speculative =
             options_.speculative.backend != ninfer::SpeculativeBackend::None;
         nlohmann::json slots = nlohmann::json::array();
         for (std::uint32_t i = 0; i < options_.max_concurrency; ++i) {
             const auto& runtime_slot = runtime.slots[i];
             const bool busy          = runtime_slot.active;
-            const bool retains       = runtime.running_requests == 0 && i == 0;
-            const std::uint32_t prompt_tokens =
-                busy ? runtime_slot.prompt_tokens
-                     : (retains ? static_cast<std::uint32_t>(last.prompt_tokens) : 0U);
-            const std::uint32_t cached_tokens =
-                busy ? runtime_slot.reusable_prompt_tokens
-                     : (retains ? static_cast<std::uint32_t>(last.cached_tokens) : 0U);
+            const std::uint32_t prompt_tokens = busy ? runtime_slot.prompt_tokens : 0U;
+            const std::uint32_t cached_tokens = busy ? runtime_slot.reusable_prompt_tokens : 0U;
             const std::uint32_t processed_tokens =
                 busy ? std::min(prompt_tokens,
                                 cached_tokens + runtime_slot.processed_prompt_tokens)
@@ -302,6 +295,7 @@ void HttpServer::register_routes() {
                              {"n_prompt_tokens_processed", processed_tokens},
                              {"n_prompt_tokens_cache", cached_tokens},
                              {"n_generated_tokens", busy ? runtime_slot.generated_tokens : 0U},
+                             {"n_kv_tokens", runtime_slot.resident_kv_tokens},
                              {"state", state},
                              {"speculative", speculative}});
         }

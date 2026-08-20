@@ -15,6 +15,7 @@ from typing import Any
 NATIVE_CONTEXT = 262_144
 KV_DTYPES = ("bf16", "int8", "rk8v4", "rk4v4", "rk4v4-e8", "rk2v4-e8")
 SPEC_MODES = ("off", "mtp")
+REASONING_EFFORTS = ("none", "low", "medium", "xhigh")
 
 
 class ConfigError(ValueError):
@@ -120,6 +121,8 @@ def _required_int(values: dict[str, str], option: str, default: int) -> int:
 def parse_config(text: str) -> dict[str, Any]:
     _, _, tokens = command_block(text)
     values, flags = _option_map(tokens)
+    if "--no-thinking" in flags and "--reasoning-effort" in values:
+        raise ConfigError("--no-thinking 不能与 --reasoning-effort 同时使用")
     spec = values.get("--spec", "off")
     return {
         "max_context": _required_int(values, "--max-context", 8192),
@@ -134,7 +137,9 @@ def parse_config(text: str) -> dict[str, Any]:
         "lm_head_draft": "--lm-head-draft" in flags,
         "vision": "--vision" in flags,
         "preserve_thinking": "--preserve-thinking" in flags,
-        "thinking": "--no-thinking" not in flags,
+        "reasoning_effort": (
+            "none" if "--no-thinking" in flags else values.get("--reasoning-effort", "xhigh")
+        ),
         "prefix_reuse": "--no-prefix-reuse" not in flags,
         "cuda_graph": "--no-cuda-graph" not in flags,
         "log_stats_interval_ms": _required_int(values, "--log-stats-interval-ms", 5000),
@@ -173,7 +178,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "lm_head_draft",
         "vision",
         "preserve_thinking",
-        "thinking",
+        "reasoning_effort",
         "prefix_reuse",
         "cuda_graph",
         "log_stats_interval_ms",
@@ -236,6 +241,9 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         raise ConfigError("MTP draft_tokens 必须在 1..5 之间")
     if spec == "off" and _bool_field(candidate, "lm_head_draft"):
         raise ConfigError("关闭 MTP 时不能启用 lm_head_draft")
+    reasoning_effort = str(candidate["reasoning_effort"])
+    if reasoning_effort not in REASONING_EFFORTS:
+        raise ConfigError("reasoning_effort 只支持 none、low、medium 或 xhigh")
 
     return {
         "max_context": max_context,
@@ -250,7 +258,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "lm_head_draft": _bool_field(candidate, "lm_head_draft"),
         "vision": _bool_field(candidate, "vision"),
         "preserve_thinking": _bool_field(candidate, "preserve_thinking"),
-        "thinking": _bool_field(candidate, "thinking"),
+        "reasoning_effort": reasoning_effort,
         "prefix_reuse": _bool_field(candidate, "prefix_reuse"),
         "cuda_graph": _bool_field(candidate, "cuda_graph"),
         "log_stats_interval_ms": stats_interval,
@@ -319,7 +327,12 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
     _set_flag(tokens, "--lm-head-draft", bool(config["lm_head_draft"]))
     _set_flag(tokens, "--vision", bool(config["vision"]))
     _set_flag(tokens, "--preserve-thinking", bool(config["preserve_thinking"]))
-    _set_flag(tokens, "--no-thinking", not bool(config["thinking"]))
+    if config["reasoning_effort"] == "none":
+        _remove_value(tokens, "--reasoning-effort")
+        _set_flag(tokens, "--no-thinking", True)
+    else:
+        _set_flag(tokens, "--no-thinking", False)
+        _replace_value(tokens, "--reasoning-effort", str(config["reasoning_effort"]))
     _set_flag(tokens, "--no-prefix-reuse", not bool(config["prefix_reuse"]))
     _set_flag(tokens, "--no-cuda-graph", not bool(config["cuda_graph"]))
 

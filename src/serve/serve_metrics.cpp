@@ -66,7 +66,8 @@ ServeMetrics::LastCompleted ServeMetrics::last_completed() const {
     return last_completed_;
 }
 
-std::string ServeMetrics::render(std::uint32_t max_concurrency) const {
+std::string ServeMetrics::render(std::uint32_t max_concurrency,
+                                 const RuntimeStats& runtime) const {
     const std::lock_guard<std::mutex> lock(mutex_);
     const std::uint64_t in_flight  = active_.size();
     const std::uint64_t processing = std::min<std::uint64_t>(in_flight, max_concurrency);
@@ -82,6 +83,10 @@ std::string ServeMetrics::render(std::uint32_t max_concurrency) const {
     append_counter(out, "ninfer:prefix_cache_hit_tokens_total", prefix_cache_hit_tokens_total_);
     append_counter(out, "ninfer:draft_tokens_total", speculative_draft_tokens_total_);
     append_counter(out, "ninfer:draft_accepted_tokens_total", speculative_accepted_tokens_total_);
+    append_counter(out, "ninfer:kv_cache_used_tokens",
+                   static_cast<std::uint64_t>(runtime.kv_cache.used_tokens));
+    append_counter(out, "ninfer:kv_cache_capacity_tokens",
+                   static_cast<std::uint64_t>(runtime.kv_cache.capacity_tokens));
     return out;
 }
 

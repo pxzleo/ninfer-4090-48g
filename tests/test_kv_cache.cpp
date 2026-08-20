@@ -147,6 +147,7 @@ int main() {
                                         {ninfer::DType::FP16, 1, 2}});
     ninfer::DeviceArena paged_arena(paged_plan.bytes);
     ninfer::PagedKVPool paged_pool({paged_arena.base(), paged_arena.capacity()}, paged_plan.layout);
+    failures += expect_size(paged_pool.mapped_pages(), 0, "initial mapped pages");
     failures += expect_size(paged_pool.plane_count(), 4, "paged plane count");
     failures += check_shape(paged_pool.plane(0), {64, 64, 2, 10}, "paged code plane");
     failures += check_shape(paged_pool.plane(2), {1, 64, 2, 10}, "paged scale plane");
@@ -180,14 +181,17 @@ int main() {
     auto allocation_b = paged_pool.reserve(3);
     allocation_a.materialize_pages(3);
     allocation_b.materialize_pages(3);
+    failures += expect_size(paged_pool.mapped_pages(), 6, "active mapped pages");
     allocation_a.bind_row(0);
     allocation_b.bind_row(1);
     failures += expect_device_page_ids(allocation_a.block_table(), {0, 1, 2}, "allocation A");
     failures += expect_device_page_ids(allocation_b.block_table(), {3, 4, 5}, "allocation B");
     allocation_a.release();
+    failures += expect_size(paged_pool.mapped_pages(), 3, "released mapped pages");
 
     auto allocation_c = paged_pool.reserve(6);
     allocation_c.materialize_pages(6);
+    failures += expect_size(paged_pool.mapped_pages(), 9, "shared mapped pages");
     allocation_c.bind_row(0);
     failures +=
         expect_page_ids(allocation_c.page_ids(), {0, 1, 2, 6, 7, 8}, "fragmented allocation C");
@@ -196,6 +200,7 @@ int main() {
     failures += expect_device_page_ids(allocation_b.block_table(), {3, 4, 5}, "isolated row B");
 
     allocation_c.trim_pages(2);
+    failures += expect_size(paged_pool.mapped_pages(), 5, "retained mapped pages");
     if (paged_pool.can_reserve(2)) {
         ++failures;
         std::cerr << "Unmapped entitlement was exposed as reservable capacity\n";
@@ -213,6 +218,7 @@ int main() {
     ninfer::resize_paged_kv_bundle(claim);
     allocation_c.bind_row(0);
     allocation_c.materialize_pages(5);
+    failures += expect_size(paged_pool.mapped_pages(), 8, "rematerialized mapped pages");
     if (allocation_c.page_ids()[0] != retained_prefix[0] ||
         allocation_c.page_ids()[1] != retained_prefix[1]) {
         ++failures;
@@ -220,8 +226,10 @@ int main() {
     }
     allocation_c.trim_tokens(65);
     failures += expect_size(allocation_c.mapped_page_count(), 2, "partial-tail mapped pages");
+    failures += expect_size(paged_pool.mapped_pages(), 5, "partial-tail pool pages");
     allocation_c.trim_tokens(64);
     failures += expect_size(allocation_c.mapped_page_count(), 1, "page-aligned mapped pages");
+    failures += expect_size(paged_pool.mapped_pages(), 4, "page-aligned pool pages");
 
     auto main_plan    = plan_paged_cache(4, 4, 1, {{ninfer::DType::BF16, 16, 1}});
     auto backend_plan = plan_paged_cache(2, 2, 1, {{ninfer::DType::BF16, 16, 1}});

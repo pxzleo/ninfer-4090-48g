@@ -284,9 +284,12 @@ generation options, configuration preview, history management, and NInfer servic
 
 - Refreshes every two seconds with aggregate decode and prefill rates, running and queued
   requests, average batch size, cumulative token counts, MTP acceptance, and cache hit rate.
-- Shows every execution slot's prefill progress, independent decode rate, scheduling state,
-  retained cache state, and context usage.
-- Reports GPU utilization, VRAM, temperature, power, and SM clock.
+- Shows every execution slot's prefill progress, independent decode rate, scheduling state, and
+  page-aligned resident Main KV usage; per-slot usage sums to the total cache occupancy.
+- Shows page-aligned total Main KV cache occupancy, including retained prefixes, against the
+  resolved shared KV capacity.
+- Reports GPU utilization, VRAM, temperature, power, and SM clock, followed by the LAN API
+  address derived from the current UI hostname and the model name reported by `/v1/models`.
 - Lists recent requests with input/output tokens, cache hit rate, TTFT, decode rate, wall time,
   finish reason, and speculative-decoding statistics.
 - Provides raw Docker logs with two-second auto-refresh and automatic scrolling to the latest
@@ -305,7 +308,10 @@ validates values, and shows a unified diff before writing. Applying a configurat
 backup under `ninfer_ui/backups/` and uses a revision check to avoid overwriting an external
 file change. Writing the file does **not** restart NInfer; use the separate start, stop, or
 restart controls when the new startup configuration should take effect. Stop and restart
-interrupt active and queued inference requests and therefore require explicit confirmation.
+interrupt active and queued inference requests and therefore use a standard confirmation dialog.
+The page also configures Qwen3.8's default reasoning level as Off, Low, Medium, or High. Off maps
+to `--no-thinking`; the other levels are written explicitly as
+`--reasoning-effort low|medium|xhigh`. Changes take effect after saving and restarting.
 
 The same page can delete throughput history for an inclusive local-calendar date range. This
 operation is irreversible and requires a typed confirmation phrase. It does not disable future
@@ -348,11 +354,12 @@ python3 -m unittest discover -s ninfer_ui/tests -v
   `llamacpp:requests_processing`, `llamacpp:requests_deferred`), so existing scrapers read this
   server without changes. Prompt tokens count only computed prefill; prefix-cache hits are
   excluded, as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache
-  hits, and MTP draft/acceptance totals.
+  hits, MTP draft/acceptance totals, and page-aligned Main KV used/capacity tokens.
 - **`GET /slots`.** A llama.cpp-shaped slot table built from the runtime lanes, including each
   active request's generated-token counter for per-slot throughput dashboards that poll slot
   state. Active entries include the lane phase, reusable prompt tokens, and boundary-consistent
-  processed prompt tokens so prefill progress can be displayed accurately.
+  processed prompt tokens so prefill progress can be displayed accurately. Every entry also
+  reports page-aligned `n_kv_tokens`; idle retained prefixes remain attributed to their real lane.
 - **NVFP4-A4 test gating.** The A4 activation tests skip on hardware without FP4 tensor cores
   instead of aborting. The full remaining suite passes on the RTX 4090.
 - **E8 lattice KV quantization (ported).** The `rk8v4`/`rk4v4`/`rk4v4-e8`/`rk2v4-e8` KV modes

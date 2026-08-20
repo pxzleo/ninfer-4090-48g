@@ -32,6 +32,8 @@ int main() {
     failures += check(defaults.allow_prefix_reuse, "prefix reuse is not enabled by default");
     failures +=
         check(!defaults.preserve_thinking, "thinking history is unexpectedly preserved by default");
+    failures += check(!defaults.reasoning_effort,
+                      "reasoning effort unexpectedly overrides the model default");
     failures += check(!defaults.enable_vision, "Vision is not disabled by default");
     failures += check(defaults.request_log_jsonl.empty(),
                       "request JSONL logging is not disabled by default");
@@ -113,12 +115,15 @@ int main() {
     const ServeOptions configured = parse(
         {"ninfer-serve", "model.ninfer", "--no-prefix-reuse", "--vision", "--max-concurrency", "4",
          "--max-pending-requests", "12", "--pending-timeout-ms", "2500", "--max-context", "4096",
-         "--kv-capacity", "8192", "--log-stats-interval-ms", "0", "--preserve-thinking"});
+         "--kv-capacity", "8192", "--log-stats-interval-ms", "0", "--preserve-thinking",
+         "--reasoning-effort", "medium"});
     failures += check(!configured.allow_prefix_reuse,
                       "--no-prefix-reuse did not disable server prefix reuse");
     failures += check(configured.enable_vision, "--vision did not enable Vision");
     failures +=
         check(configured.preserve_thinking, "--preserve-thinking did not reach serving options");
+    failures += check(configured.reasoning_effort == ninfer::ReasoningEffort::Medium,
+                      "--reasoning-effort did not reach serving options");
     failures +=
         check(configured.max_concurrency == 4, "--max-concurrency did not reach serving options");
     failures += check(configured.max_context == 4096 &&
@@ -156,6 +161,9 @@ int main() {
     request.max_tokens = 1;
     ninfer::PromptCapabilities prompt_capabilities;
     prompt_capabilities.enable_thinking = true;
+    prompt_capabilities.reasoning_effort.low    = true;
+    prompt_capabilities.reasoning_effort.medium = true;
+    prompt_capabilities.reasoning_effort.xhigh  = true;
     failures += check(to_request_options(request, defaults).execution.allow_prefix_reuse,
                       "default server policy did not reach Engine options");
     failures += check(!to_request_options(request, configured).execution.allow_prefix_reuse,
@@ -171,6 +179,21 @@ int main() {
     failures +=
         check(resolve_prompt_semantics(request, configured, prompt_capabilities).preserve_thinking,
               "server preserve-thinking default was not resolved");
+    failures += check(resolve_prompt_semantics(request, configured, prompt_capabilities)
+                              .reasoning_effort == ninfer::ReasoningEffort::Medium,
+                      "server reasoning-effort default was not resolved");
+    request.enable_thinking = false;
+    const ResolvedPromptSemantics thinking_disabled =
+        resolve_prompt_semantics(request, configured, prompt_capabilities);
+    failures += check(!thinking_disabled.enable_thinking && !thinking_disabled.reasoning_effort,
+                      "request thinking override retained the server reasoning effort");
+    request.enable_thinking.reset();
+    request.reasoning_effort       = RequestedReasoningEffort::None;
+    const ResolvedPromptSemantics effort_disabled =
+        resolve_prompt_semantics(request, configured, prompt_capabilities);
+    failures += check(!effort_disabled.enable_thinking && !effort_disabled.reasoning_effort,
+                      "reasoning_effort none retained the server reasoning effort");
+    request.reasoning_effort.reset();
     request.preserve_thinking = false;
     failures +=
         check(!resolve_prompt_semantics(request, configured, prompt_capabilities).preserve_thinking,
@@ -182,6 +205,9 @@ int main() {
     failures +=
         check(serve_usage_text("ninfer-serve").find("--preserve-thinking") != std::string::npos,
               "serve help omits --preserve-thinking");
+    failures +=
+        check(serve_usage_text("ninfer-serve").find("--reasoning-effort") != std::string::npos,
+              "serve help omits --reasoning-effort");
     failures += check(serve_usage_text("ninfer-serve").find("--vision") != std::string::npos,
                       "serve help omits --vision");
     failures +=
@@ -224,6 +250,14 @@ int main() {
     }
     failures += check(!secret_present, "startup argv retained the API key");
     failures += check(redaction_present, "startup argv omitted the API-key redaction marker");
+
+    bool thinking_conflict_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--no-thinking", "--reasoning-effort",
+                     "low"});
+    } catch (const std::invalid_argument&) { thinking_conflict_rejected = true; }
+    failures += check(thinking_conflict_rejected,
+                      "--no-thinking and --reasoning-effort were accepted together");
 
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

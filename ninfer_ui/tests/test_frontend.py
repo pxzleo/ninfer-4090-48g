@@ -11,6 +11,22 @@ APP_HTML = Path(__file__).parents[1] / "static" / "index.html"
 
 
 class SlotStageTest(unittest.TestCase):
+    def test_lan_api_address_uses_ui_hostname_and_target_port(self):
+        script = f"""
+const {{lanApiAddress}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify([
+  lanApiAddress("http://127.0.0.1:8080", "192.168.100.149"),
+  lanApiAddress("invalid", "192.168.100.149"),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            ["http://192.168.100.149:8080/v1", "—"],
+        )
+
     def render(
         self, slot: dict, throughput: dict | None = None, slot_rate: float | None = None
     ) -> str:
@@ -39,8 +55,38 @@ class SlotStageTest(unittest.TestCase):
         self.assertEqual(self.render(slot), "预填充中 · 62.4%")
 
     def test_idle_slot_uses_cache_wording_in_chinese(self):
-        slot = {"is_processing": False, "n_prompt_tokens": 128}
+        slot = {"is_processing": False, "n_prompt_tokens": 0, "n_kv_tokens": 128}
         self.assertEqual(self.render(slot), "空闲 · 缓存已保留")
+
+    def test_slot_cache_uses_resident_kv_tokens(self):
+        script = f"""
+const {{slotKvUsage}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify(slotKvUsage({{
+  n_prompt_tokens: 193848,
+  n_kv_tokens: 194112,
+  n_ctx: 262144,
+}})));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"used": 194112, "capacity": 262144, "percent": 74.0478515625},
+        )
+
+    def test_slot_cache_falls_back_for_old_server(self):
+        script = f"""
+const {{slotKvUsage}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify(slotKvUsage({{
+  n_prompt_tokens: 193848,
+  n_ctx: 262144,
+}})));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(json.loads(result.stdout)["used"], 193848)
 
     def test_prefill_progress_includes_cached_tokens(self):
         slot = {
@@ -125,6 +171,40 @@ process.stdout.write(JSON.stringify([
             'aria-describedby="confirm-message">',
             html,
         )
+        self.assertIn('id="confirm-phrase-row"', html)
+
+    def test_service_stop_and_restart_use_plain_confirmation(self):
+        script = f"""
+const {{confirmationState, serviceConfirmationOptions}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify({{
+  empty: confirmationState(""),
+  typed: confirmationState("DELETE HISTORY"),
+  restart: serviceConfirmationOptions("restart"),
+  stop: serviceConfirmationOptions("stop"),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        states = json.loads(result.stdout)
+        self.assertEqual(
+            states["empty"],
+            {"phraseRequired": False, "inputHidden": True, "confirmDisabled": False},
+        )
+        self.assertEqual(
+            states["typed"],
+            {"phraseRequired": True, "inputHidden": False, "confirmDisabled": True},
+        )
+        self.assertEqual(states["restart"]["confirmation"], "RESTART NINFER")
+        self.assertEqual(states["stop"]["confirmation"], "STOP NINFER")
+        self.assertNotIn("phrase", states["restart"])
+        self.assertNotIn("phrase", states["stop"])
+
+    def test_qwen38_reasoning_level_replaces_thinking_toggle(self):
+        html = APP_HTML.read_text(encoding="utf-8")
+        self.assertIn('<select name="reasoning_effort">', html)
+        self.assertIn('<option value="none" data-i18n="settings.reasoningOff">', html)
+        self.assertNotIn('input name="thinking"', html)
 
     def test_static_translation_keys_exist_in_both_languages(self):
         script = f"""
@@ -158,6 +238,29 @@ process.stdout.write(JSON.stringify(calculateSlotDecodeRates(previous, slots, 30
         )
         rates = json.loads(result.stdout)["rates"]
         self.assertEqual(rates, {"1": 5, "2": 10})
+
+    def test_total_kv_cache_usage_is_percent_based_and_rejects_invalid_values(self):
+        script = f"""
+const {{kvCacheUsage}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify([
+  kvCacheUsage(131072, 524288),
+  kvCacheUsage(600000, 524288),
+  kvCacheUsage(-1, 524288),
+  kvCacheUsage(1, 0),
+  kvCacheUsage(undefined, 524288),
+  kvCacheUsage(1, undefined),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        usage = json.loads(result.stdout)
+        self.assertEqual(usage[0], {"used": 131072, "capacity": 524288, "percent": 25})
+        self.assertIsNone(usage[1])
+        self.assertIsNone(usage[2])
+        self.assertIsNone(usage[3])
+        self.assertIsNone(usage[4])
+        self.assertIsNone(usage[5])
 
     def test_slot_rate_resets_on_discontinuous_sample(self):
         script = f"""
