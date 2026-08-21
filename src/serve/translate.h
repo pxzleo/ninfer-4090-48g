@@ -18,6 +18,7 @@ using MediaAcquirer = std::function<ninfer::OwnedMedia(const ContentPart&)>;
 struct ResolvedPromptSemantics {
     bool enable_thinking = true;
     std::optional<ninfer::ReasoningEffort> reasoning_effort;
+    ninfer::ReasoningLanguage reasoning_language = ninfer::ReasoningLanguage::Unspecified;
     bool preserve_thinking = false;
 };
 

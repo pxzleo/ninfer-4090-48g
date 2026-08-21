@@ -35,6 +35,8 @@ int main() {
         check(!defaults.preserve_thinking, "thinking history is unexpectedly preserved by default");
     failures += check(!defaults.reasoning_effort,
                       "reasoning effort unexpectedly overrides the model default");
+    failures += check(defaults.reasoning_language == ninfer::ReasoningLanguage::Unspecified,
+                      "reasoning language is unexpectedly forced by default");
     failures += check(!defaults.enable_vision, "Vision is not disabled by default");
     failures += check(defaults.request_log_jsonl.empty(),
                       "request JSONL logging is not disabled by default");
@@ -145,7 +147,7 @@ int main() {
         {"ninfer-serve", "model.ninfer", "--no-prefix-reuse", "--vision", "--max-concurrency", "4",
          "--max-pending-requests", "12", "--pending-timeout-ms", "2500", "--max-context", "4096",
          "--kv-capacity", "8192", "--log-stats-interval-ms", "0", "--preserve-thinking",
-         "--reasoning-effort", "medium"});
+         "--reasoning-effort", "medium", "--reasoning-language", "zh-CN"});
     failures += check(!configured.allow_prefix_reuse,
                       "--no-prefix-reuse did not disable server prefix reuse");
     failures += check(configured.enable_vision, "--vision did not enable Vision");
@@ -153,6 +155,24 @@ int main() {
         check(configured.preserve_thinking, "--preserve-thinking did not reach serving options");
     failures += check(configured.reasoning_effort == ninfer::ReasoningEffort::Medium,
                       "--reasoning-effort did not reach serving options");
+    failures += check(
+        configured.reasoning_language == ninfer::ReasoningLanguage::SimplifiedChinese,
+        "--reasoning-language zh-CN did not reach serving options");
+
+    bool reasoning_language_rejected = false;
+    try {
+        (void)parse(
+            {"ninfer-serve", "model.ninfer", "--reasoning-language", "zh-CN", "--no-thinking"});
+    } catch (const std::invalid_argument&) { reasoning_language_rejected = true; }
+    failures += check(reasoning_language_rejected,
+                      "forced reasoning language was accepted with thinking disabled");
+
+    bool unsupported_reasoning_language_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--reasoning-language", "en-US"});
+    } catch (const std::invalid_argument&) { unsupported_reasoning_language_rejected = true; }
+    failures += check(unsupported_reasoning_language_rejected,
+                      "an unsupported reasoning language was accepted");
     failures +=
         check(configured.max_concurrency == 4, "--max-concurrency did not reach serving options");
     failures += check(configured.max_context == 4096 &&
@@ -211,16 +231,29 @@ int main() {
     failures += check(resolve_prompt_semantics(request, configured, prompt_capabilities)
                               .reasoning_effort == ninfer::ReasoningEffort::Medium,
                       "server reasoning-effort default was not resolved");
+    const ResolvedPromptSemantics configured_semantics =
+        resolve_prompt_semantics(request, configured, prompt_capabilities);
+    failures += check(
+        configured_semantics.reasoning_language == ninfer::ReasoningLanguage::SimplifiedChinese,
+        "server reasoning-language default was not resolved");
+    failures += check(
+        to_prompt_input(request, configured_semantics, {}).options.reasoning_language ==
+            ninfer::ReasoningLanguage::SimplifiedChinese,
+        "resolved reasoning language did not reach PromptInput");
     request.enable_thinking = false;
     const ResolvedPromptSemantics thinking_disabled =
         resolve_prompt_semantics(request, configured, prompt_capabilities);
-    failures += check(!thinking_disabled.enable_thinking && !thinking_disabled.reasoning_effort,
+    failures += check(!thinking_disabled.enable_thinking && !thinking_disabled.reasoning_effort &&
+                          thinking_disabled.reasoning_language ==
+                              ninfer::ReasoningLanguage::Unspecified,
                       "request thinking override retained the server reasoning effort");
     request.enable_thinking.reset();
     request.reasoning_effort       = RequestedReasoningEffort::None;
     const ResolvedPromptSemantics effort_disabled =
         resolve_prompt_semantics(request, configured, prompt_capabilities);
-    failures += check(!effort_disabled.enable_thinking && !effort_disabled.reasoning_effort,
+    failures += check(!effort_disabled.enable_thinking && !effort_disabled.reasoning_effort &&
+                          effort_disabled.reasoning_language ==
+                              ninfer::ReasoningLanguage::Unspecified,
                       "reasoning_effort none retained the server reasoning effort");
     request.reasoning_effort.reset();
     request.preserve_thinking = false;
@@ -237,6 +270,9 @@ int main() {
     failures +=
         check(serve_usage_text("ninfer-serve").find("--reasoning-effort") != std::string::npos,
               "serve help omits --reasoning-effort");
+    failures +=
+        check(serve_usage_text("ninfer-serve").find("--reasoning-language") != std::string::npos,
+              "serve help omits --reasoning-language");
     failures += check(serve_usage_text("ninfer-serve").find("--vision") != std::string::npos,
                       "serve help omits --vision");
     failures +=

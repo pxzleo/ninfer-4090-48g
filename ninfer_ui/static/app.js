@@ -8,6 +8,7 @@ const I18N = {
   "zh-CN": {
     "nav.main": "主导航", "nav.home": "NInfer Control 首页", "nav.overview": "实时监控", "nav.requests": "请求记录", "nav.settings": "运行配置",
     "language.label": "界面语言", "language.auto": "自动", "language.zh": "中文", "language.en": "English",
+    "settings.chineseReasoning": "中文思考",
     "connection.status": "连接状态", "connection.connecting": "正在连接", "connection.updated": "最后更新", "connection.online": "服务在线", "connection.unavailable": "服务不可用", "connection.failed": "连接失败",
     "action.refresh": "立即刷新", "common.off": "关闭", "common.cancel": "取消", "common.confirm": "确认", "error.network": "网络请求失败，请检查 UI 服务连接",
     "overview.title": "实时运行", "overview.waitingModel": "等待模型信息", "overview.totals": "累计用量",
@@ -25,6 +26,7 @@ const I18N = {
   en: {
     "nav.main": "Main navigation", "nav.home": "NInfer Control home", "nav.overview": "Live monitoring", "nav.requests": "Request history", "nav.settings": "Runtime settings",
     "language.label": "Language", "language.auto": "Auto", "language.zh": "中文", "language.en": "English",
+    "settings.chineseReasoning": "Chinese reasoning",
     "connection.status": "Connection status", "connection.connecting": "Connecting", "connection.updated": "Last updated", "connection.online": "Service online", "connection.unavailable": "Service unavailable", "connection.failed": "Connection failed",
     "action.refresh": "Refresh now", "common.off": "Off", "common.cancel": "Cancel", "common.confirm": "Confirm", "error.network": "Network request failed; check the UI service connection",
     "overview.title": "Live workload", "overview.waitingModel": "Waiting for model information", "overview.totals": "Cumulative usage",
@@ -907,7 +909,7 @@ const CONFIG_NUMBER_FIELDS = new Set([
   "prefill_chunk", "draft_tokens", "log_stats_interval_ms", "default_max_tokens",
 ]);
 const CONFIG_BOOL_FIELDS = new Set([
-  "lm_head_draft", "vision", "preserve_thinking", "prefix_reuse", "cuda_graph",
+  "lm_head_draft", "vision", "preserve_thinking", "chinese_reasoning", "prefix_reuse", "cuda_graph",
 ]);
 
 function populateConfig(config) {
@@ -919,6 +921,7 @@ function populateConfig(config) {
     else field.value = value;
   }
   syncSpecFields();
+  syncReasoningFields();
 }
 
 function configFromForm() {
@@ -977,6 +980,13 @@ function syncSpecFields() {
   form.elements.draft_tokens.disabled = off;
   form.elements.lm_head_draft.disabled = off;
   if (off) form.elements.lm_head_draft.checked = false;
+}
+
+function syncReasoningFields() {
+  const form = $("#settings-form");
+  const off = form.elements.reasoning_effort.value === "none";
+  form.elements.chinese_reasoning.disabled = off;
+  if (off) form.elements.chinese_reasoning.checked = false;
 }
 
 function confirmationState(phrase = "") {
@@ -1292,6 +1302,7 @@ function bindEvents() {
   $("#history-prev").addEventListener("click", () => shiftHistoryPeriod(-1));
   $("#history-next").addEventListener("click", () => shiftHistoryPeriod(1));
   $("#settings-form").elements.spec.addEventListener("change", syncSpecFields);
+  $("#settings-form").elements.reasoning_effort.addEventListener("change", syncReasoningFields);
   $("#confirm-input").addEventListener("input", event => {
     $("#confirm-submit").disabled = event.target.value !== $("#confirm-phrase").textContent;
   });

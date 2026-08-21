@@ -262,6 +262,11 @@ enum class ReasoningEffort : std::uint8_t {
     XHigh,
 };
 
+enum class ReasoningLanguage : std::uint8_t {
+    Unspecified,
+    SimplifiedChinese,
+};
+
 struct ReasoningEffortCapabilities {
     bool low    = false;
     bool medium = false;
@@ -290,6 +295,7 @@ struct PromptOptions {
     bool add_generation_prompt = true;
     bool enable_thinking       = true;
     std::optional<ReasoningEffort> reasoning_effort;
+    ReasoningLanguage reasoning_language = ReasoningLanguage::Unspecified;
     bool preserve_thinking = false;
     bool add_vision_id     = false;
     std::vector<std::string> tool_jsons;

@@ -290,6 +290,7 @@ fi::ChatRenderOptions render_options(const PromptOptions& options) {
     return fi::ChatRenderOptions{.add_generation_prompt = options.add_generation_prompt,
                                  .enable_thinking       = options.enable_thinking,
                                  .reasoning_effort      = options.reasoning_effort,
+                                 .reasoning_language    = options.reasoning_language,
                                  .preserve_thinking     = options.preserve_thinking,
                                  .add_vision_id         = options.add_vision_id,
                                  .tool_jsons            = options.tool_jsons};

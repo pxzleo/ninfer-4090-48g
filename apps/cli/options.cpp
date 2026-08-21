@@ -74,6 +74,12 @@ ReasoningEffort parse_reasoning_effort(std::string_view text) {
     throw std::invalid_argument("invalid reasoning-effort: " + std::string(text));
 }
 
+ReasoningLanguage parse_reasoning_language(std::string_view text) {
+    if (text == "zh-CN") { return ReasoningLanguage::SimplifiedChinese; }
+    throw std::invalid_argument("invalid reasoning-language: " + std::string(text) +
+                                " (supported: zh-CN)");
+}
+
 } // namespace
 
 std::string usage_text(const char* argv0) {
@@ -87,7 +93,8 @@ std::string usage_text(const char* argv0) {
            "       [--presence-penalty F] [--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--stop-token-id N]... [--stop <text>]... [--reasoning-stop <text>]...\n"
            "       [--raw-output] [--print-token-ids] [--no-thinking]\n"
-           "       [--reasoning-effort low|medium|xhigh] [--vision] [--vision-max-tokens N]\n"
+           "       [--reasoning-effort low|medium|xhigh] [--reasoning-language zh-CN]\n"
+           "       [--vision] [--vision-max-tokens N]\n"
            "       [--no-cuda-graph]\n"
            "\n"
            "Streams answer content to stdout and reasoning plus diagnostics to stderr.\n"
@@ -95,6 +102,8 @@ std::string usage_text(const char* argv0) {
            "media sources may be local paths, HTTP(S) URLs, or base64 data URIs.\n"
            "--vision enables image/video input and loads the fixed Vision GPU allocations.\n"
            "--vision-max-tokens sets the Vision scratchpad token capacity (default 8192).\n"
+           "--reasoning-language zh-CN adds a Chinese reasoning constraint and a short prefix "
+           "immediately after <think>.\n"
            "--kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom.\n"
@@ -150,6 +159,8 @@ Options parse_options(int argc, char** argv) {
             options.enable_thinking = false;
         } else if (arg == "--reasoning-effort") {
             options.reasoning_effort = parse_reasoning_effort(value(arg));
+        } else if (arg == "--reasoning-language") {
+            options.reasoning_language = parse_reasoning_language(value(arg));
         } else if (arg == "--vision") {
             options.enable_vision = true;
         } else if (arg == "--vision-max-tokens" || arg == "--vision-limit") {
@@ -221,6 +232,10 @@ Options parse_options(int argc, char** argv) {
     }
     if (!options.enable_thinking && options.reasoning_effort) {
         throw std::invalid_argument("--reasoning-effort cannot be combined with --no-thinking");
+    }
+    if (!options.enable_thinking &&
+        options.reasoning_language != ReasoningLanguage::Unspecified) {
+        throw std::invalid_argument("--reasoning-language cannot be combined with --no-thinking");
     }
     if (options.greedy) { options.sampling.temperature = 0.0F; }
     return options;

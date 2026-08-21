@@ -271,6 +271,7 @@ int main(int argc, char** argv) {
                 : ninfer::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
                                                         cli.enable_vision);
         input.options.reasoning_effort = cli.reasoning_effort;
+        input.options.reasoning_language = cli.reasoning_language;
 
         ninfer::RequestOptions request;
         request.execution.sampling                = cli.sampling;

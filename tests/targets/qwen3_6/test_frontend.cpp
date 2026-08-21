@@ -452,6 +452,79 @@ int test_reasoning_effort_chat_template() {
     return failures;
 }
 
+int test_simplified_chinese_reasoning_language() {
+    fi::ChatRenderOptions options;
+    options.reasoning_language = ninfer::ReasoningLanguage::SimplifiedChinese;
+
+    const std::string rendered =
+        reasoning_effort_template()
+            .render({chat_message("system", "现有系统约束。"), chat_message("user", "解释这个问题。")},
+                    options)
+            .text;
+    int failures = check(
+        rendered.find("所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。") !=
+            std::string::npos,
+        "simplified-Chinese reasoning did not inject the language constraint");
+    failures += check(
+        rendered.ends_with("<|im_start|>assistant\n<think>\n我将全程使用简体中文进行分析："),
+        "simplified-Chinese reasoning did not inject the post-think prefix");
+    failures += check(rendered.find("Reasoning effort is set to xhigh") == std::string::npos &&
+                          rendered.find("推理强度设为极高") != std::string::npos,
+                      "simplified-Chinese xhigh mode retained the English effort instruction");
+
+    options.reasoning_effort = ninfer::ReasoningEffort::Low;
+    const std::string low =
+        reasoning_effort_template().render({chat_message("user", "解释。")}, options).text;
+    failures += check(low.find("推理强度设为低") != std::string::npos &&
+                          low.find("Reasoning effort is set to low") == std::string::npos,
+                      "simplified-Chinese low mode was not localized");
+
+    options.reasoning_effort = ninfer::ReasoningEffort::Medium;
+    const std::string medium =
+        reasoning_effort_template().render({chat_message("user", "解释。")}, options).text;
+    failures += check(medium.find("推理强度设为低") == std::string::npos &&
+                          medium.find("推理强度设为极高") == std::string::npos,
+                      "simplified-Chinese medium mode injected an effort instruction");
+
+    options.reasoning_effort.reset();
+    failures += check(
+        thinking_toggle_template()
+            .render({chat_message("user", "解释。")}, options)
+            .text.find("所有推理过程必须使用简体中文") != std::string::npos,
+        "thinking-toggle template did not apply simplified-Chinese reasoning");
+
+    options.add_generation_prompt = false;
+    failures += check(
+        reasoning_effort_template()
+                .render({chat_message("user", "解释。")}, options)
+                .text.find("我将全程使用简体中文进行分析：") == std::string::npos,
+        "reasoning prefix was injected without a generation prompt");
+    options.add_generation_prompt = true;
+
+    options.reasoning_language = static_cast<ninfer::ReasoningLanguage>(255);
+    failures += check(throws_invalid_argument([&] {
+                          (void)reasoning_effort_template().render(
+                              {chat_message("user", "hello")}, options);
+                      }),
+                      "invalid reasoning language was silently accepted");
+    options.reasoning_language = ninfer::ReasoningLanguage::SimplifiedChinese;
+    options.reasoning_effort   = static_cast<ninfer::ReasoningEffort>(255);
+    failures += check(throws_invalid_argument([&] {
+                          (void)reasoning_effort_template().render(
+                              {chat_message("user", "hello")}, options);
+                      }),
+                      "invalid reasoning effort was silently accepted in Chinese mode");
+
+    options.reasoning_effort.reset();
+    options.enable_thinking = false;
+    failures += check(throws_invalid_argument([&] {
+                          (void)reasoning_effort_template().render(
+                              {chat_message("user", "hello")}, options);
+                      }),
+                      "simplified-Chinese reasoning was accepted with thinking disabled");
+    return failures;
+}
+
 int test_turn_rewrite_trace() {
     const std::string assistant_header = "<|im_start|>assistant\n";
     fi::ChatMessage first              = chat_message("assistant", "");
@@ -811,6 +884,7 @@ int main() {
     failures += test_official_tokenizer_merge();
     failures += test_official_chat_template();
     failures += test_reasoning_effort_chat_template();
+    failures += test_simplified_chinese_reasoning_language();
     failures += test_turn_rewrite_trace();
     failures += test_official_resource_guards();
     failures += test_text_and_image_prepare(frontend);

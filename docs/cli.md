@@ -28,7 +28,11 @@ Thinking is enabled by default. If the chat template embedded in the loaded arti
 reasoning effort, `--reasoning-effort low|medium|xhigh` selects it; omitting the option uses the
 template's default. An artifact whose template does not expose effort rejects the option. Add
 `--no-thinking` for direct-response prompt rendering; it cannot be combined with
-`--reasoning-effort`. `--greedy` selects exact argmax decoding independently.
+`--reasoning-effort`. `--reasoning-language zh-CN` adds a Simplified-Chinese system constraint and
+a short Chinese continuation immediately after `<think>`; it cannot be combined with
+`--no-thinking`. This is prompt steering rather than a character-level decoding constraint, so
+code, identifiers, commands, formulas, and technical terms can still remain in their original
+form. `--greedy` selects exact argmax decoding independently.
 
 ## Startup memory profile
 
@@ -145,6 +149,7 @@ measured recommendation rather than a semantic limit.
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--no-thinking` | disable thinking in prompt rendering | thinking on |
 | `--reasoning-effort low\|medium\|xhigh` | select an effort exposed by the loaded chat template | template default |
+| `--reasoning-language zh-CN` | steer new-turn reasoning and the default answer language to Simplified Chinese; cannot be combined with `--no-thinking` | unset |
 | `--greedy` | exact argmax decoding | off |
 | `--temperature F` | sampling temperature override | registered model/mode default |
 | `--top-p F` | nucleus-threshold override | registered model/mode default |

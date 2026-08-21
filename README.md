@@ -197,7 +197,7 @@ docker run --rm --gpus all --publish 8080:8080 \
   --pending-timeout-ms 600000 \
   --prefill-chunk 1024 --kv-dtype rk4v4-e8 \
   --spec mtp --draft-tokens 3 --lm-head-draft \
-  --preserve-thinking
+  --preserve-thinking --reasoning-language zh-CN
 ```
 
 Measured against INT8 KV on this build: identical MTP acceptance at 111K depth
@@ -341,7 +341,8 @@ restart controls when the new startup configuration should take effect. Stop and
 interrupt active and queued inference requests and therefore use a standard confirmation dialog.
 The page also configures Qwen3.8's default reasoning level as Off, Low, Medium, or High. Off maps
 to `--no-thinking`; the other levels are written explicitly as
-`--reasoning-effort low|medium|xhigh`. Changes take effect after saving and restarting.
+`--reasoning-effort low|medium|xhigh`. A separate Chinese reasoning switch is off by default;
+enabling it writes `--reasoning-language zh-CN`. Changes take effect after saving and restarting.
 
 The same page can delete throughput history for an inclusive local-calendar date range. This
 operation is irreversible and requires a typed confirmation phrase. It does not disable future
@@ -487,7 +488,10 @@ accepts a top-level `reasoning_effort` field (`low`, `medium`, `xhigh`) and eith
 `enable_thinking` alias or `chat_template_kwargs.enable_thinking`; hidden reasoning returns
 separately as `message.reasoning_content`. Contradictory aliases are rejected. For the CLI, pass
 `--reasoning-effort` or `--no-thinking`. Sampling defaults come from the model card and switch
-with the thinking mode.
+with the thinking mode. To steer the complete reasoning trace and default answer language to
+Simplified Chinese, add `--reasoning-language zh-CN`. It combines a Chinese system constraint with
+a short Chinese continuation immediately after `<think>`; this is prompt steering rather than a
+character-level mask, so code and technical terms remain usable.
 
 ## Serving APIs
 

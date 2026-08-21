@@ -119,10 +119,14 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
     ResolvedPromptSemantics result{
         .enable_thinking   = request.enable_thinking.value_or(server.enable_thinking),
         .reasoning_effort  = server.reasoning_effort,
+        .reasoning_language = server.reasoning_language,
         .preserve_thinking = request.preserve_thinking.value_or(server.preserve_thinking),
     };
     if (!request.reasoning_effort) {
-        if (!result.enable_thinking) { result.reasoning_effort.reset(); }
+        if (!result.enable_thinking) {
+            result.reasoning_effort.reset();
+            result.reasoning_language = ninfer::ReasoningLanguage::Unspecified;
+        }
         return result;
     }
 
@@ -136,6 +140,7 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
 
     if (requested == RequestedReasoningEffort::None) {
         result.reasoning_effort.reset();
+        result.reasoning_language = ninfer::ReasoningLanguage::Unspecified;
         if (!capabilities.enable_thinking) {
             invalid_prompt_option("the loaded chat template cannot disable thinking",
                                   request.reasoning_effort_param, "reasoning_effort_not_supported");
@@ -224,6 +229,7 @@ ninfer::PromptInput to_prompt_input(const GenerationRequest& request,
     input.options.add_generation_prompt = true;
     input.options.enable_thinking       = semantics.enable_thinking;
     input.options.reasoning_effort      = semantics.reasoning_effort;
+    input.options.reasoning_language    = semantics.reasoning_language;
     input.options.preserve_thinking     = semantics.preserve_thinking;
     input.options.add_vision_id         = false;
     input.options.tool_jsons            = effective_tool_jsons(request);

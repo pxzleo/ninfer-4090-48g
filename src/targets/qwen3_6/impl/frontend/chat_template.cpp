@@ -34,6 +34,19 @@ constexpr std::string_view kXHighReasoningInstructions =
     "assumptions, consider plausible alternatives, and prioritize correctness, consistency, and "
     "clarity in the final answer.";
 
+constexpr std::string_view kSimplifiedChineseReasoningInstructions =
+    "所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。代码、变量、命令、公式及无法准确翻译的专有名词可以保留原文。"
+    "最终回答也使用简体中文，除非用户明确要求其他语言。";
+
+constexpr std::string_view kSimplifiedChineseLowReasoningInstructions =
+    "推理强度设为低。请保持思考简短且聚焦，直接得出结论，避免不必要的展开。";
+
+constexpr std::string_view kSimplifiedChineseXHighReasoningInstructions =
+    "推理强度设为极高。请仔细分析任务，验证关键假设，考虑合理的替代方案，并优先保证最终答案正确、一致且清晰。";
+
+constexpr std::string_view kSimplifiedChineseReasoningPrefix =
+    "我将全程使用简体中文进行分析：";
+
 bool is_allowed_role(const std::string& role) {
     return role == "system" || role == "user" || role == "assistant" || role == "tool";
 }
@@ -215,13 +228,27 @@ std::string render_tools_system_block(const std::vector<std::string>& tool_jsons
     return rendered;
 }
 
-std::string_view resolve_reasoning_instructions(ChatTemplateSemantics semantics,
-                                                const ChatRenderOptions& options) {
+std::string resolve_reasoning_instructions(ChatTemplateSemantics semantics,
+                                           const ChatRenderOptions& options) {
+    switch (options.reasoning_language) {
+    case ReasoningLanguage::Unspecified:
+    case ReasoningLanguage::SimplifiedChinese:
+        break;
+    default:
+        throw std::invalid_argument("invalid reasoning language");
+    }
+    if (!options.enable_thinking &&
+        options.reasoning_language != ReasoningLanguage::Unspecified) {
+        throw std::invalid_argument(
+            "reasoning language cannot be combined with disabled thinking");
+    }
     if (semantics == ChatTemplateSemantics::ThinkingToggle) {
         if (options.reasoning_effort) {
             throw std::invalid_argument("loaded chat template does not support reasoning effort");
         }
-        return {};
+        return options.reasoning_language == ReasoningLanguage::SimplifiedChinese
+                   ? std::string(kSimplifiedChineseReasoningInstructions)
+                   : std::string();
     }
     if (!options.enable_thinking) {
         if (options.reasoning_effort) {
@@ -231,13 +258,33 @@ std::string_view resolve_reasoning_instructions(ChatTemplateSemantics semantics,
         return {};
     }
 
-    switch (options.reasoning_effort.value_or(ReasoningEffort::XHigh)) {
+    const ReasoningEffort effort = options.reasoning_effort.value_or(ReasoningEffort::XHigh);
+    if (options.reasoning_language == ReasoningLanguage::SimplifiedChinese) {
+        std::string instructions(kSimplifiedChineseReasoningInstructions);
+        switch (effort) {
+        case ReasoningEffort::Low:
+            instructions += "\n\n";
+            instructions += kSimplifiedChineseLowReasoningInstructions;
+            break;
+        case ReasoningEffort::Medium:
+            break;
+        case ReasoningEffort::XHigh:
+            instructions += "\n\n";
+            instructions += kSimplifiedChineseXHighReasoningInstructions;
+            break;
+        default:
+            throw std::invalid_argument("invalid reasoning effort");
+        }
+        return instructions;
+    }
+
+    switch (effort) {
     case ReasoningEffort::Low:
-        return kLowReasoningInstructions;
+        return std::string(kLowReasoningInstructions);
     case ReasoningEffort::Medium:
         return {};
     case ReasoningEffort::XHigh:
-        return kXHighReasoningInstructions;
+        return std::string(kXHighReasoningInstructions);
     }
     throw std::invalid_argument("invalid reasoning effort");
 }
@@ -307,7 +354,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
     if (messages.empty()) { throw std::invalid_argument("chat messages must not be empty"); }
 
     const bool effort_template = semantics_ == ChatTemplateSemantics::ReasoningEffort;
-    const std::string_view reasoning_instructions =
+    const std::string reasoning_instructions =
         resolve_reasoning_instructions(semantics_, options);
 
     std::size_t num_sys = 0;
@@ -419,6 +466,9 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         if (!turn_rewrite_byte_offset) { turn_rewrite_byte_offset = rendered.size(); }
         if (options.enable_thinking) {
             rendered += "<think>\n";
+            if (options.reasoning_language == ReasoningLanguage::SimplifiedChinese) {
+                rendered += kSimplifiedChineseReasoningPrefix;
+            }
         } else {
             rendered += "<think>\n\n</think>\n\n";
         }

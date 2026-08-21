@@ -100,6 +100,33 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertIn("--reasoning-effort", result.rendered)
         self.assertEqual(parse_config(result.rendered)["reasoning_effort"], "medium")
 
+    def test_chinese_reasoning_toggle_defaults_off_and_round_trips(self) -> None:
+        config = parse_config(COMPOSE)
+        self.assertFalse(config["chinese_reasoning"])
+
+        config["chinese_reasoning"] = True
+        enabled = preview(COMPOSE, config)
+        self.assertIn("--reasoning-language\n      - zh-CN", enabled.rendered)
+        self.assertTrue(parse_config(enabled.rendered)["chinese_reasoning"])
+
+        config = parse_config(enabled.rendered)
+        config["chinese_reasoning"] = False
+        disabled = preview(enabled.rendered, config)
+        self.assertNotIn("--reasoning-language", disabled.rendered)
+        self.assertFalse(parse_config(disabled.rendered)["chinese_reasoning"])
+
+    def test_rejects_chinese_reasoning_when_thinking_is_off(self) -> None:
+        config = parse_config(COMPOSE)
+        config["reasoning_effort"] = "none"
+        config["chinese_reasoning"] = True
+        with self.assertRaisesRegex(ConfigError, "中文思考"):
+            preview(COMPOSE, config)
+
+    def test_rejects_unsupported_reasoning_language_in_compose(self) -> None:
+        unsupported = COMPOSE + "      - --reasoning-language\n      - en-US\n"
+        with self.assertRaisesRegex(ConfigError, "reasoning-language"):
+            parse_config(unsupported)
+
     def test_disables_and_reenables_qwen38_reasoning(self) -> None:
         config = parse_config(COMPOSE)
         config["reasoning_effort"] = "none"

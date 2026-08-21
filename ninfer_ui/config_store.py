@@ -123,6 +123,13 @@ def parse_config(text: str) -> dict[str, Any]:
     values, flags = _option_map(tokens)
     if "--no-thinking" in flags and "--reasoning-effort" in values:
         raise ConfigError("--no-thinking 不能与 --reasoning-effort 同时使用")
+    if "--reasoning-language" in flags:
+        raise ConfigError("--reasoning-language 在 compose.yaml 中缺少值")
+    reasoning_language = values.get("--reasoning-language")
+    if reasoning_language not in (None, "zh-CN"):
+        raise ConfigError("--reasoning-language 只支持 zh-CN")
+    if "--no-thinking" in flags and reasoning_language is not None:
+        raise ConfigError("关闭思考时不能启用中文思考")
     spec = values.get("--spec", "off")
     return {
         "max_context": _required_int(values, "--max-context", 8192),
@@ -140,6 +147,7 @@ def parse_config(text: str) -> dict[str, Any]:
         "reasoning_effort": (
             "none" if "--no-thinking" in flags else values.get("--reasoning-effort", "xhigh")
         ),
+        "chinese_reasoning": reasoning_language == "zh-CN",
         "prefix_reuse": "--no-prefix-reuse" not in flags,
         "cuda_graph": "--no-cuda-graph" not in flags,
         "log_stats_interval_ms": _required_int(values, "--log-stats-interval-ms", 5000),
@@ -179,6 +187,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "vision",
         "preserve_thinking",
         "reasoning_effort",
+        "chinese_reasoning",
         "prefix_reuse",
         "cuda_graph",
         "log_stats_interval_ms",
@@ -244,6 +253,9 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
     reasoning_effort = str(candidate["reasoning_effort"])
     if reasoning_effort not in REASONING_EFFORTS:
         raise ConfigError("reasoning_effort 只支持 none、low、medium 或 xhigh")
+    chinese_reasoning = _bool_field(candidate, "chinese_reasoning")
+    if reasoning_effort == "none" and chinese_reasoning:
+        raise ConfigError("关闭思考时不能启用中文思考")
 
     return {
         "max_context": max_context,
@@ -259,6 +271,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "vision": _bool_field(candidate, "vision"),
         "preserve_thinking": _bool_field(candidate, "preserve_thinking"),
         "reasoning_effort": reasoning_effort,
+        "chinese_reasoning": chinese_reasoning,
         "prefix_reuse": _bool_field(candidate, "prefix_reuse"),
         "cuda_graph": _bool_field(candidate, "cuda_graph"),
         "log_stats_interval_ms": stats_interval,
@@ -333,6 +346,10 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
     else:
         _set_flag(tokens, "--no-thinking", False)
         _replace_value(tokens, "--reasoning-effort", str(config["reasoning_effort"]))
+    if config["chinese_reasoning"]:
+        _replace_value(tokens, "--reasoning-language", "zh-CN")
+    else:
+        _remove_value(tokens, "--reasoning-language")
     _set_flag(tokens, "--no-prefix-reuse", not bool(config["prefix_reuse"]))
     _set_flag(tokens, "--no-cuda-graph", not bool(config["cuda_graph"]))
 
