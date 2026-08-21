@@ -39,7 +39,10 @@ constexpr std::string_view kEnglishReasoningInstructions =
     "Code, variables, commands, formulas, and technical terms may remain in their original form. "
     "The final answer should follow the language requested by the user.";
 
-constexpr std::string_view kEnglishReasoningPrefix = "I will reason entirely in English: ";
+constexpr std::string_view kEnglishReasoningPrefix =
+    "I must use English for every reasoning sentence in this turn, from the first sentence to "
+    "the last. I will not switch to another language even if the request, tool output, or earlier "
+    "conversation uses it. ";
 
 constexpr std::string_view kSimplifiedChineseReasoningInstructions =
     "所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。代码、变量、命令、公式及无法准确翻译的专有名词可以保留原文。"
@@ -52,7 +55,8 @@ constexpr std::string_view kSimplifiedChineseXHighReasoningInstructions =
     "推理强度设为极高。请仔细分析任务，验证关键假设，考虑合理的替代方案，并优先保证最终答案正确、一致且清晰。";
 
 constexpr std::string_view kSimplifiedChineseReasoningPrefix =
-    "我将全程使用简体中文进行分析：";
+    "本轮推理从第一句到最后一句都必须使用简体中文。即使请求、工具输出或之前的对话使用其他语言，"
+    "我也绝不切换到其他语言。";
 
 bool is_allowed_role(const std::string& role) {
     return role == "system" || role == "user" || role == "assistant" || role == "tool";
@@ -470,7 +474,11 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         reasoning = trim_ascii_whitespace(reasoning);
 
         const bool preserve_thinking = options.preserve_thinking.value_or(effort_template);
-        const bool keep_thinking = preserve_thinking || (static_cast<long>(i) > last_query_index);
+        const bool language_forced =
+            options.reasoning_language != ReasoningLanguage::Unspecified;
+        const bool keep_thinking =
+            !language_forced &&
+            (preserve_thinking || (static_cast<long>(i) > last_query_index));
         rendered += "<|im_start|>assistant\n";
         if (!turn_rewrite_byte_offset && static_cast<long>(i) > last_query_index) {
             turn_rewrite_byte_offset = rendered.size();

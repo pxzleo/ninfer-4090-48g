@@ -148,8 +148,10 @@ switch; contradictory aliases, or a contradictory combination with `reasoning_ef
 `conflicting_template_option`.
 
 `preserve_thinking` controls whether reasoning from closed assistant turns remains in later
-prompts. It defaults to the server setting, which is off unless `--preserve-thinking` is used. If
-both OpenAI spellings are present they must carry the same boolean value. Unknown non-null
+prompts. It defaults to the server setting, which is off unless `--preserve-thinking` is used. An
+explicit server `--reasoning-language` takes priority and makes the effective preservation value
+false; assistant answers, tool calls, and tool results remain in the prompt. If both OpenAI
+spellings are present they must carry the same boolean value. Unknown non-null
 `chat_template_kwargs` keys are rejected.
 
 Streaming begins with an assistant-role chunk, sends separate reasoning and content deltas, then a
@@ -238,8 +240,8 @@ wire response contains typed `output` Items.
 | `top_p` | finite number in `[0,1]` |
 | `metadata` | at most 16 string pairs; keys at most 64 characters and values at most 512 |
 | `reasoning.effort` | `none` disables thinking; `low`, `medium`, or `xhigh` selects an effort exposed by the loaded chat template; `minimal`, `high`, and `max` return `reasoning_effort_not_supported` for the registered templates |
-| `chat_template_kwargs.preserve_thinking` | optional boolean controlling whether closed-turn reasoning remains in reconstructed prompts |
-| `preserve_thinking` | top-level alias for the same option; conflicting values are rejected |
+| `chat_template_kwargs.preserve_thinking` | optional boolean controlling whether closed-turn reasoning remains in reconstructed prompts; an explicit server reasoning language overrides it to false |
+| `preserve_thinking` | top-level alias for the same option; conflicting values are rejected, and an explicit server reasoning language still takes priority |
 | `text.format` | omitted or `{"type":"text"}` only |
 | `tools` | flat Responses function definitions; see below |
 | `tool_choice` | `auto` or `none` |
@@ -429,7 +431,8 @@ The endpoint supports system text, user/assistant history, text and image blocks
 tool-use history, tool results, client-defined tools, non-streaming responses, and Anthropic SSE
 events. `thinking.type: "disabled"` disables thinking; other supported values enable it.
 The independent top-level `preserve_thinking` boolean controls closed-turn history and otherwise
-uses the server default.
+uses the server default. An explicit server reasoning language takes priority and omits reasoning
+history while retaining assistant answers, tool calls, and tool results.
 
 Anthropic `output_config.effort` accepts the protocol values `low`, `medium`, `high`, `xhigh`, and
 `max`. The value is then checked against the loaded chat template in the same way as the OpenAI
@@ -511,7 +514,9 @@ Engine selects sampling defaults from the loaded model and the request's resolve
 `--reasoning-language en-US|zh-CN` is deliberately prompt-level steering, not a Unicode logits mask: it
 keeps code, identifiers, commands, formulas, and technical terms usable, but cannot mathematically
 guarantee that a sampled model output contains no isolated text or passages in another language. A
-request that disables thinking also disables this reasoning-language steering for that request.
+request that disables thinking also disables this reasoning-language steering for that request. An
+explicit reasoning language omits prior reasoning traces from later prompts even when
+`--preserve-thinking` is enabled; prior answers, tool calls, and tool results remain available.
 Qwen3.6-27B and Qwen3.8-27B use `1.0/0.95/20/0/0` for
 temperature/top-p/top-k/min-p/presence penalty in thinking mode and `0.7/0.80/20/0/1.5` in
 non-thinking mode. Qwen3.6-35B-A3B differs only in its thinking presence penalty, which is `1.5`.
@@ -621,9 +626,11 @@ reports the reused token count as `cache=`.
 The shared family runtime distinguishes `full_reset`, `append_frontier`, and
 `restore_turn_checkpoint`. A turn checkpoint includes the recurrent and selected
 speculative-backend continuation state required to recompute a rewritten suffix; matching KV
-tokens alone never authorize a partial hit. Stable `preserve_thinking=true` histories normally
-append, while stable `false` histories restore the previous open-turn checkpoint when a new user
-closes that turn. The JSONL completion record exposes the selected path as `prefix_reuse_path`.
+tokens alone never authorize a partial hit. Stable effective `preserve_thinking=true` histories
+normally append, while stable `false` histories restore the previous open-turn checkpoint when a
+new user closes that turn. An explicit reasoning language makes the effective value false even
+when preservation was requested. The JSONL completion record exposes the selected path as
+`prefix_reuse_path`.
 Changing reasoning effort changes the rendered prompt and therefore does not reuse a prefix whose
 effort instruction differs.
 

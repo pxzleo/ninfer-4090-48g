@@ -466,7 +466,9 @@ int test_reasoning_languages() {
             std::string::npos,
         "simplified-Chinese reasoning did not inject the language constraint");
     failures += check(
-        rendered.ends_with("<|im_start|>assistant\n<think>\n我将全程使用简体中文进行分析："),
+        rendered.ends_with(
+            "<|im_start|>assistant\n<think>\n本轮推理从第一句到最后一句都必须使用简体中文。"
+            "即使请求、工具输出或之前的对话使用其他语言，我也绝不切换到其他语言。"),
         "simplified-Chinese reasoning did not inject the post-think prefix");
     failures += check(rendered.find("Reasoning effort is set to xhigh") == std::string::npos &&
                           rendered.find("推理强度设为极高") != std::string::npos,
@@ -497,7 +499,8 @@ int test_reasoning_languages() {
     failures += check(
         reasoning_effort_template()
                 .render({chat_message("user", "解释。")}, options)
-                .text.find("我将全程使用简体中文进行分析：") == std::string::npos,
+                .text.find("本轮推理从第一句到最后一句都必须使用简体中文。") ==
+            std::string::npos,
         "reasoning prefix was injected without a generation prompt");
     options.add_generation_prompt = true;
 
@@ -536,11 +539,58 @@ int test_reasoning_languages() {
     failures += check(
         english.find("All reasoning must use English") != std::string::npos,
         "English reasoning did not inject the language constraint");
-    failures += check(english.find("我们需要用中文分析。") != std::string::npos,
-                      "English reasoning test did not preserve the prior Chinese reasoning");
+    failures += check(english.find("我们需要用中文分析。") == std::string::npos,
+                      "explicit English mode retained conflicting reasoning history");
     failures += check(
-        english.ends_with("<|im_start|>assistant\n<think>\nI will reason entirely in English: "),
+        english.ends_with(
+            "<|im_start|>assistant\n<think>\nI must use English for every reasoning sentence "
+            "in this turn, from the first sentence to the last. I will not switch to another "
+            "language even if the request, tool output, or earlier conversation uses it. "),
         "English reasoning did not inject the post-think prefix");
+
+    fi::ChatMessage first_tool_call = chat_message("assistant", "工具调用前的回答。");
+    first_tool_call.reasoning_content = "第一段中文推理。";
+    first_tool_call.tool_calls.push_back(
+        {.id = "call-1", .name = "lookup", .arguments_json = R"({"city":"成都"})"});
+    fi::ChatMessage tool_result = chat_message("tool", "晴，25°C");
+    tool_result.tool_call_id    = "call-1";
+    fi::ChatMessage second_tool_call = chat_message("assistant", "继续调用后的回答。");
+    second_tool_call.reasoning_content = "第二段中文推理。";
+    second_tool_call.tool_calls.push_back(
+        {.id = "call-2", .name = "finish", .arguments_json = R"({"ok":true})"});
+    const fi::RenderedChat forced_tool_loop = reasoning_effort_template().render(
+        {chat_message("user", "查询天气。"), first_tool_call, tool_result, second_tool_call,
+         chat_message("tool", "done")},
+        options);
+    failures += check(forced_tool_loop.text.find("第一段中文推理。") == std::string::npos &&
+                          forced_tool_loop.text.find("第二段中文推理。") == std::string::npos,
+                      "explicit language retained tool-loop reasoning history");
+    failures += check(
+        forced_tool_loop.text.find("工具调用前的回答。") != std::string::npos &&
+            forced_tool_loop.text.find("继续调用后的回答。") != std::string::npos &&
+            forced_tool_loop.text.find("<function=lookup>") != std::string::npos &&
+            forced_tool_loop.text.find("<function=finish>") != std::string::npos &&
+            forced_tool_loop.text.find("晴，25°C") != std::string::npos &&
+            forced_tool_loop.text.find("done") != std::string::npos,
+        "explicit language removed assistant answers, tool calls, or tool results");
+    const std::size_t first_tool_header =
+        forced_tool_loop.text.find("<|im_start|>assistant\n");
+    failures += check(first_tool_header != std::string::npos &&
+                          forced_tool_loop.turn_rewrite_byte_offset &&
+                          *forced_tool_loop.turn_rewrite_byte_offset ==
+                              first_tool_header + std::string("<|im_start|>assistant\n").size(),
+                      "explicit language changed the open tool-loop rewrite boundary");
+
+    options.reasoning_language = ninfer::ReasoningLanguage::SimplifiedChinese;
+    history.reasoning_content  = "We should reason in English.";
+    const std::string chinese =
+        reasoning_effort_template()
+            .render({chat_message("user", "Calculate."), history,
+                     chat_message("user", "Continue.")},
+                    options)
+            .text;
+    failures += check(chinese.find("We should reason in English.") == std::string::npos,
+                      "explicit Chinese mode retained conflicting English reasoning history");
     return failures;
 }
 

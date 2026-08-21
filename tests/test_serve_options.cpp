@@ -230,9 +230,11 @@ int main() {
     request.sampling.temperature = 1.1;
     failures += check(to_request_options(request, sampling).execution.sampling.temperature == 1.1F,
                       "request sampling override did not win over the server override");
-    failures +=
-        check(resolve_prompt_semantics(request, configured, prompt_capabilities).preserve_thinking,
-              "server preserve-thinking default was not resolved");
+    const ServeOptions preserve_only =
+        parse({"ninfer-serve", "model.ninfer", "--preserve-thinking"});
+    failures += check(
+        resolve_prompt_semantics(request, preserve_only, prompt_capabilities).preserve_thinking,
+        "server preserve-thinking default was not resolved without a language override");
     failures += check(resolve_prompt_semantics(request, configured, prompt_capabilities)
                               .reasoning_effort == ninfer::ReasoningEffort::Medium,
                       "server reasoning-effort default was not resolved");
@@ -241,6 +243,8 @@ int main() {
     failures += check(
         configured_semantics.reasoning_language == ninfer::ReasoningLanguage::SimplifiedChinese,
         "server reasoning-language default was not resolved");
+    failures += check(!configured_semantics.preserve_thinking,
+                      "explicit reasoning language did not disable effective history preservation");
     failures += check(
         to_prompt_input(request, configured_semantics, {}).options.reasoning_language ==
             ninfer::ReasoningLanguage::SimplifiedChinese,

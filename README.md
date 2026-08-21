@@ -495,6 +495,9 @@ Simplified Chinese, add `--reasoning-language zh-CN`. To explicitly restore Engl
 when earlier Chinese reasoning is preserved in the conversation, use `--reasoning-language en-US`.
 Both modes combine a system constraint with a short continuation immediately after `<think>`; this
 is prompt steering rather than a character-level mask, so code and technical terms remain usable.
+When a reasoning language is selected explicitly, prior reasoning traces are omitted from the next
+prompt so a long tool session cannot anchor the model to the previous language; prior answers, tool
+calls, and tool results remain available.
 
 ## Serving APIs
 
