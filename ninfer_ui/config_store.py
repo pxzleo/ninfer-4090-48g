@@ -126,10 +126,10 @@ def parse_config(text: str) -> dict[str, Any]:
     if "--reasoning-language" in flags:
         raise ConfigError("--reasoning-language 在 compose.yaml 中缺少值")
     reasoning_language = values.get("--reasoning-language")
-    if reasoning_language not in (None, "zh-CN"):
-        raise ConfigError("--reasoning-language 只支持 zh-CN")
+    if reasoning_language not in (None, "en-US", "zh-CN"):
+        raise ConfigError("--reasoning-language 只支持 en-US 或 zh-CN")
     if "--no-thinking" in flags and reasoning_language is not None:
-        raise ConfigError("关闭思考时不能启用中文思考")
+        raise ConfigError("关闭思考时不能指定思考语言")
     spec = values.get("--spec", "off")
     return {
         "max_context": _required_int(values, "--max-context", 8192),
@@ -346,10 +346,12 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
     else:
         _set_flag(tokens, "--no-thinking", False)
         _replace_value(tokens, "--reasoning-effort", str(config["reasoning_effort"]))
-    if config["chinese_reasoning"]:
+    if config["reasoning_effort"] == "none":
+        _remove_value(tokens, "--reasoning-language")
+    elif config["chinese_reasoning"]:
         _replace_value(tokens, "--reasoning-language", "zh-CN")
     else:
-        _remove_value(tokens, "--reasoning-language")
+        _replace_value(tokens, "--reasoning-language", "en-US")
     _set_flag(tokens, "--no-prefix-reuse", not bool(config["prefix_reuse"]))
     _set_flag(tokens, "--no-cuda-graph", not bool(config["cuda_graph"]))
 

@@ -167,9 +167,14 @@ int main() {
     failures += check(reasoning_language_rejected,
                       "forced reasoning language was accepted with thinking disabled");
 
+    const ServeOptions english =
+        parse({"ninfer-serve", "model.ninfer", "--reasoning-language", "en-US"});
+    failures += check(english.reasoning_language == ninfer::ReasoningLanguage::English,
+                      "--reasoning-language en-US did not reach serving options");
+
     bool unsupported_reasoning_language_rejected = false;
     try {
-        (void)parse({"ninfer-serve", "model.ninfer", "--reasoning-language", "en-US"});
+        (void)parse({"ninfer-serve", "model.ninfer", "--reasoning-language", "fr-FR"});
     } catch (const std::invalid_argument&) { unsupported_reasoning_language_rejected = true; }
     failures += check(unsupported_reasoning_language_rejected,
                       "an unsupported reasoning language was accepted");

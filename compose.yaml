@@ -38,5 +38,7 @@ services:
       - --lm-head-draft
       - --vision
       - --preserve-thinking
+      - --reasoning-language
+      - en-US
       - --log-stats-interval-ms
       - "2000"

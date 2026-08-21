@@ -73,9 +73,10 @@ ReasoningEffort parse_reasoning_effort(const char* text) {
 
 ReasoningLanguage parse_reasoning_language(const char* text) {
     const std::string_view value(text);
+    if (value == "en-US") { return ReasoningLanguage::English; }
     if (value == "zh-CN") { return ReasoningLanguage::SimplifiedChinese; }
-    throw std::invalid_argument(
-        "invalid reasoning-language: " + std::string(value) + " (supported: zh-CN)");
+    throw std::invalid_argument("invalid reasoning-language: " + std::string(value) +
+                                " (supported: en-US, zh-CN)");
 }
 
 } // namespace
@@ -94,7 +95,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--vision] [--vision-max-tokens N] [--image-token-budget N] "
            "[--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--reasoning-effort low|medium|xhigh] "
-           "[--reasoning-language zh-CN] "
+           "[--reasoning-language en-US|zh-CN] "
            "[--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
@@ -126,8 +127,8 @@ std::string serve_usage_text(const char* argv0) {
            " MiB of sizing headroom\n"
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default)\n"
            "       --preserve-thinking retains closed-turn assistant reasoning in later prompts\n"
-           "       --reasoning-language zh-CN steers reasoning to Simplified Chinese by adding "
-           "a Chinese system constraint and a short prefix immediately after <think>\n"
+           "       --reasoning-language en-US|zh-CN steers reasoning to the selected language "
+           "by adding a system constraint and a short prefix immediately after <think>\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n";

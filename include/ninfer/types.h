@@ -264,6 +264,7 @@ enum class ReasoningEffort : std::uint8_t {
 
 enum class ReasoningLanguage : std::uint8_t {
     Unspecified,
+    English,
     SimplifiedChinese,
 };
 

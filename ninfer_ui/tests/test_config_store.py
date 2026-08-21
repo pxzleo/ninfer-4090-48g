@@ -112,7 +112,7 @@ class ConfigStoreTest(unittest.TestCase):
         config = parse_config(enabled.rendered)
         config["chinese_reasoning"] = False
         disabled = preview(enabled.rendered, config)
-        self.assertNotIn("--reasoning-language", disabled.rendered)
+        self.assertIn("--reasoning-language\n      - en-US", disabled.rendered)
         self.assertFalse(parse_config(disabled.rendered)["chinese_reasoning"])
 
     def test_rejects_chinese_reasoning_when_thinking_is_off(self) -> None:
@@ -123,16 +123,21 @@ class ConfigStoreTest(unittest.TestCase):
             preview(COMPOSE, config)
 
     def test_rejects_unsupported_reasoning_language_in_compose(self) -> None:
-        unsupported = COMPOSE + "      - --reasoning-language\n      - en-US\n"
+        unsupported = COMPOSE + "      - --reasoning-language\n      - fr-FR\n"
         with self.assertRaisesRegex(ConfigError, "reasoning-language"):
             parse_config(unsupported)
 
     def test_disables_and_reenables_qwen38_reasoning(self) -> None:
         config = parse_config(COMPOSE)
+        english = preview(COMPOSE, config)
+        self.assertIn("--reasoning-language\n      - en-US", english.rendered)
+
+        config = parse_config(english.rendered)
         config["reasoning_effort"] = "none"
-        disabled = preview(COMPOSE, config)
+        disabled = preview(english.rendered, config)
         self.assertIn("--no-thinking", disabled.rendered)
         self.assertNotIn("--reasoning-effort", disabled.rendered)
+        self.assertNotIn("--reasoning-language", disabled.rendered)
         self.assertEqual(parse_config(disabled.rendered)["reasoning_effort"], "none")
 
         config = parse_config(disabled.rendered)

@@ -75,9 +75,10 @@ ReasoningEffort parse_reasoning_effort(std::string_view text) {
 }
 
 ReasoningLanguage parse_reasoning_language(std::string_view text) {
+    if (text == "en-US") { return ReasoningLanguage::English; }
     if (text == "zh-CN") { return ReasoningLanguage::SimplifiedChinese; }
     throw std::invalid_argument("invalid reasoning-language: " + std::string(text) +
-                                " (supported: zh-CN)");
+                                " (supported: en-US, zh-CN)");
 }
 
 } // namespace
@@ -93,7 +94,7 @@ std::string usage_text(const char* argv0) {
            "       [--presence-penalty F] [--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--stop-token-id N]... [--stop <text>]... [--reasoning-stop <text>]...\n"
            "       [--raw-output] [--print-token-ids] [--no-thinking]\n"
-           "       [--reasoning-effort low|medium|xhigh] [--reasoning-language zh-CN]\n"
+           "       [--reasoning-effort low|medium|xhigh] [--reasoning-language en-US|zh-CN]\n"
            "       [--vision] [--vision-max-tokens N]\n"
            "       [--no-cuda-graph]\n"
            "\n"
@@ -102,8 +103,8 @@ std::string usage_text(const char* argv0) {
            "media sources may be local paths, HTTP(S) URLs, or base64 data URIs.\n"
            "--vision enables image/video input and loads the fixed Vision GPU allocations.\n"
            "--vision-max-tokens sets the Vision scratchpad token capacity (default 8192).\n"
-           "--reasoning-language zh-CN adds a Chinese reasoning constraint and a short prefix "
-           "immediately after <think>.\n"
+           "--reasoning-language en-US|zh-CN adds the selected reasoning-language constraint "
+           "and a short prefix immediately after <think>.\n"
            "--kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom.\n"

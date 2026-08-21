@@ -452,7 +452,7 @@ int test_reasoning_effort_chat_template() {
     return failures;
 }
 
-int test_simplified_chinese_reasoning_language() {
+int test_reasoning_languages() {
     fi::ChatRenderOptions options;
     options.reasoning_language = ninfer::ReasoningLanguage::SimplifiedChinese;
 
@@ -522,6 +522,25 @@ int test_simplified_chinese_reasoning_language() {
                               {chat_message("user", "hello")}, options);
                       }),
                       "simplified-Chinese reasoning was accepted with thinking disabled");
+
+    options.enable_thinking    = true;
+    options.reasoning_language = ninfer::ReasoningLanguage::English;
+    fi::ChatMessage history     = chat_message("assistant", "答案是 31。");
+    history.reasoning_content   = "我们需要用中文分析。";
+    const std::string english =
+        reasoning_effort_template()
+            .render({chat_message("user", "请计算。"), history,
+                     chat_message("user", "继续解释。")},
+                    options)
+            .text;
+    failures += check(
+        english.find("All reasoning must use English") != std::string::npos,
+        "English reasoning did not inject the language constraint");
+    failures += check(english.find("我们需要用中文分析。") != std::string::npos,
+                      "English reasoning test did not preserve the prior Chinese reasoning");
+    failures += check(
+        english.ends_with("<|im_start|>assistant\n<think>\nI will reason entirely in English: "),
+        "English reasoning did not inject the post-think prefix");
     return failures;
 }
 
@@ -884,7 +903,7 @@ int main() {
     failures += test_official_tokenizer_merge();
     failures += test_official_chat_template();
     failures += test_reasoning_effort_chat_template();
-    failures += test_simplified_chinese_reasoning_language();
+    failures += test_reasoning_languages();
     failures += test_turn_rewrite_trace();
     failures += test_official_resource_guards();
     failures += test_text_and_image_prepare(frontend);

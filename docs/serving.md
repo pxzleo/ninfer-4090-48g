@@ -495,7 +495,7 @@ curl http://127.0.0.1:8080/v1/models \
 | `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
 | `--no-thinking` | disable thinking by default | thinking on |
 | `--reasoning-effort low\|medium\|xhigh` | default reasoning effort for templates that support it; cannot be combined with `--no-thinking` | template default (Qwen3.8: `xhigh`) |
-| `--reasoning-language zh-CN` | steer reasoning to Simplified Chinese with a Chinese system constraint and a short continuation immediately after `<think>`; cannot be combined with `--no-thinking` | unset |
+| `--reasoning-language en-US\|zh-CN` | steer reasoning to English or Simplified Chinese with a system constraint and a short continuation immediately after `<think>`; cannot be combined with `--no-thinking` | unset |
 | `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
 | `--cors` | permissive browser CORS headers | off |
 | `--temperature F` | process-level temperature override | unset |
@@ -508,10 +508,10 @@ curl http://127.0.0.1:8080/v1/models \
 | `--greedy` | force exact argmax for all requests | off |
 
 Engine selects sampling defaults from the loaded model and the request's resolved thinking mode.
-`--reasoning-language zh-CN` is deliberately prompt-level steering, not a Unicode logits mask: it
+`--reasoning-language en-US|zh-CN` is deliberately prompt-level steering, not a Unicode logits mask: it
 keeps code, identifiers, commands, formulas, and technical terms usable, but cannot mathematically
-guarantee that a sampled model output contains no isolated non-Chinese text. A request that disables
-thinking also disables this reasoning-language steering for that request.
+guarantee that a sampled model output contains no isolated text or passages in another language. A
+request that disables thinking also disables this reasoning-language steering for that request.
 Qwen3.6-27B and Qwen3.8-27B use `1.0/0.95/20/0/0` for
 temperature/top-p/top-k/min-p/presence penalty in thinking mode and `0.7/0.80/20/0/1.5` in
 non-thinking mode. Qwen3.6-35B-A3B differs only in its thinking presence penalty, which is `1.5`.

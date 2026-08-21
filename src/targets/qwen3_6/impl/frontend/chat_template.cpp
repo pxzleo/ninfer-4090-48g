@@ -34,6 +34,13 @@ constexpr std::string_view kXHighReasoningInstructions =
     "assumptions, consider plausible alternatives, and prioritize correctness, consistency, and "
     "clarity in the final answer.";
 
+constexpr std::string_view kEnglishReasoningInstructions =
+    "All reasoning must use English. Do not use complete non-English sentences in the analysis. "
+    "Code, variables, commands, formulas, and technical terms may remain in their original form. "
+    "The final answer should follow the language requested by the user.";
+
+constexpr std::string_view kEnglishReasoningPrefix = "I will reason entirely in English: ";
+
 constexpr std::string_view kSimplifiedChineseReasoningInstructions =
     "所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。代码、变量、命令、公式及无法准确翻译的专有名词可以保留原文。"
     "最终回答也使用简体中文，除非用户明确要求其他语言。";
@@ -232,6 +239,7 @@ std::string resolve_reasoning_instructions(ChatTemplateSemantics semantics,
                                            const ChatRenderOptions& options) {
     switch (options.reasoning_language) {
     case ReasoningLanguage::Unspecified:
+    case ReasoningLanguage::English:
     case ReasoningLanguage::SimplifiedChinese:
         break;
     default:
@@ -246,9 +254,16 @@ std::string resolve_reasoning_instructions(ChatTemplateSemantics semantics,
         if (options.reasoning_effort) {
             throw std::invalid_argument("loaded chat template does not support reasoning effort");
         }
-        return options.reasoning_language == ReasoningLanguage::SimplifiedChinese
-                   ? std::string(kSimplifiedChineseReasoningInstructions)
-                   : std::string();
+        switch (options.reasoning_language) {
+        case ReasoningLanguage::Unspecified:
+            return {};
+        case ReasoningLanguage::English:
+            return std::string(kEnglishReasoningInstructions);
+        case ReasoningLanguage::SimplifiedChinese:
+            return std::string(kSimplifiedChineseReasoningInstructions);
+        default:
+            throw std::invalid_argument("invalid reasoning language");
+        }
     }
     if (!options.enable_thinking) {
         if (options.reasoning_effort) {
@@ -271,6 +286,25 @@ std::string resolve_reasoning_instructions(ChatTemplateSemantics semantics,
         case ReasoningEffort::XHigh:
             instructions += "\n\n";
             instructions += kSimplifiedChineseXHighReasoningInstructions;
+            break;
+        default:
+            throw std::invalid_argument("invalid reasoning effort");
+        }
+        return instructions;
+    }
+
+    if (options.reasoning_language == ReasoningLanguage::English) {
+        std::string instructions(kEnglishReasoningInstructions);
+        switch (effort) {
+        case ReasoningEffort::Low:
+            instructions += "\n\n";
+            instructions += kLowReasoningInstructions;
+            break;
+        case ReasoningEffort::Medium:
+            break;
+        case ReasoningEffort::XHigh:
+            instructions += "\n\n";
+            instructions += kXHighReasoningInstructions;
             break;
         default:
             throw std::invalid_argument("invalid reasoning effort");
@@ -468,6 +502,8 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
             rendered += "<think>\n";
             if (options.reasoning_language == ReasoningLanguage::SimplifiedChinese) {
                 rendered += kSimplifiedChineseReasoningPrefix;
+            } else if (options.reasoning_language == ReasoningLanguage::English) {
+                rendered += kEnglishReasoningPrefix;
             }
         } else {
             rendered += "<think>\n\n</think>\n\n";
