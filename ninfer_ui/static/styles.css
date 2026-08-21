@@ -331,10 +331,7 @@ main { padding: clamp(30px, 4vw, 64px); }
 .toggle input:checked + span { border-color: #4b8c70; background: rgba(118,240,189,.1); }
 .toggle input:checked + span::after { background: var(--accent); transform: translateX(12px); }
 .toggle b { color: var(--muted); font-size: 10px; font-weight: 500; }
-.toggle small { color: var(--quiet); font-size: 9px; line-height: 1.5; }
-.toggle-with-help { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: start; }
-.toggle-with-help > span { margin-top: 1px; }
-.toggle-copy { display: grid; min-width: 0; gap: 3px; }
+.reasoning-language-help { margin: 10px 0 0; color: var(--quiet); font-size: 9px; line-height: 1.5; }
 .history-retention { margin: -6px 0 20px; color: var(--quiet); font-size: 11px; line-height: 1.6; }
 .history-delete-grid { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto; align-items: end; gap: 18px; }
 .history-delete-grid label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
