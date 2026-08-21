@@ -43,13 +43,13 @@ Maintenance rules:
 | Production E8 codec test | `94830b3f` | not applicable | Same reason. Also registers the standalone oracle, which ctest had never run |
 | GDN QK norm XOR butterfly | `6e239351` | open | Bit-exact over 6.4M lanes, measures near zero. Port is cheap; value is consistency, not throughput |
 | GDN uniform value pack | `c4d09b61` | open | Bit-exact over all 65536 bf16 patterns, measures near zero. Born here, not a port |
-| Nested `chat_template_kwargs.enable_thinking` | working tree (from `032b2533`, `6f3e6056`) | open | Adapted from Neroued PR #50; conflicting aliases are rejected |
-| Chat cached-token usage details | working tree (from `7503d8a4`) | open | Adapted from Neroued PR #55 for plain, tool, and streaming usage |
-| Schema-aware tool string arguments | working tree (from `99d39090`) | open | Adapted from Neroued PR #65; explicit string schemas preserve JSON-looking text |
-| Per-image token budget | working tree (from `eb413c76`) | open | Adapted from Neroued PR #61 to this frontend's image pixel ceiling |
-| Greedy penalty bypass | working tree (from `957046f5`) | open | From the sergiuszm fork; grammar rejection still applies before exact argmax |
-| CUDA Graph allowance floor | working tree (from `87a58c37`) | open | From the sergiuszm fork; 40 MiB plus 8 MiB per execution slot |
-| Q5 Ada 17-64-token schedule | working tree (from `7a780455`) | not applicable | From UDPSendToFailed; numerical tests pass and matched short-prefill median improved about 1.9% on the 48 GB RTX 4090 |
+| Nested `chat_template_kwargs.enable_thinking` | `257d6c61` (from `032b2533`, `6f3e6056`) | open | Adapted from Neroued PR #50; conflicting aliases are rejected |
+| Chat cached-token usage details | `257d6c61` (from `7503d8a4`) | open | Adapted from Neroued PR #55 for plain, tool, and streaming usage |
+| Schema-aware tool string arguments | `257d6c61` (from `99d39090`) | open | Adapted from Neroued PR #65; explicit string schemas preserve JSON-looking text |
+| Per-image token budget | `257d6c61` (from `eb413c76`) | open | Adapted from Neroued PR #61 to this frontend's image pixel ceiling |
+| Greedy penalty bypass | `257d6c61` (from `957046f5`) | open | From the sergiuszm fork; grammar rejection still applies before exact argmax |
+| CUDA Graph allowance floor | `257d6c61` (from `87a58c37`) | open | From the sergiuszm fork; 40 MiB plus 8 MiB per execution slot |
+| Q5 Ada 17-64-token schedule | `257d6c61` (from `7a780455`) | not applicable | From UDPSendToFailed; numerical tests pass and matched short-prefill median improved about 1.9% on the 48 GB RTX 4090 |
 
 ## Deliberate non-ports
 
