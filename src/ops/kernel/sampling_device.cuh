@@ -138,6 +138,9 @@ __device__ __forceinline__ float sampling_adjusted_logit(float raw, int v, const
                                                          const std::int32_t* overlay = nullptr,
                                                          int overlay_len             = 0) {
     float x = raw;
+    // Greedy rows are raw argmax by contract. Charset rejection above still applies, but
+    // repetition penalties, filters, RNG, and token-count updates must not change the winner.
+    if (!(c.temperature > 0.0f)) { return x; }
     if (c.presence_penalty == 0.0f && c.frequency_penalty == 0.0f) { return x; }
     int cnt = c.token_counts != nullptr ? c.token_counts[v] : 0;
     for (int j = 0; j < overlay_len; ++j) {

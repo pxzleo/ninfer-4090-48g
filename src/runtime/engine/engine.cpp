@@ -6,10 +6,22 @@
 #include "runtime/engine/concurrent_executor.h"
 #include "targets/registry.h"
 
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <span>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace ninfer {
 namespace {
@@ -117,6 +129,14 @@ GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView
     return impl->wait(sink, cancellation);
 }
 
+namespace {
+
+std::string slot_model_binding(const LoadSummary& load) {
+    return load.target + '\n' + load.model_id + '\n' + load.weights_id;
+}
+
+} // namespace
+
 class Engine::Impl {
 public:
     using Executor27 = runtime::ConcurrentExecutor<targets::Qwen3_6_27BInstance>;
@@ -141,13 +161,52 @@ public:
                 }
             },
             active);
+        if (options.auto_save_evicted) {
+            std::visit(
+                [&](auto& constructed_executor) {
+                    using ExecutorPtr = std::remove_cvref_t<decltype(constructed_executor)>;
+                    if constexpr (!std::is_same_v<ExecutorPtr, std::monostate>) {
+                        constructed_executor->set_eviction_sink(
+                            slot_model_binding(load),
+                            [this](std::string path,
+                                   targets::qwen3_6::RetainedSessionSnapshot&& snapshot) {
+                                enqueue_write(std::move(path), std::move(snapshot));
+                            });
+                    }
+                },
+                executor);
+        }
     }
 
     ~Impl() noexcept {
         executor.emplace<std::monostate>();
+        stop_writer();
         try {
             device.synchronize();
         } catch (...) {}
+    }
+
+    // Auto-save writer: eviction spills enqueue (path, snapshot) here; one background thread
+    // publishes each file with the same write-then-rename discipline as an explicit save.
+    struct PendingWrite {
+        std::string path;
+        targets::qwen3_6::RetainedSessionSnapshot snapshot;
+    };
+
+    void enqueue_write(std::string path, targets::qwen3_6::RetainedSessionSnapshot&& snapshot) {
+        std::unique_lock lock(writer_mutex);
+        if (!writer.joinable()) { writer = std::thread([this] { writer_loop(); }); }
+        pending_writes.push_back(PendingWrite{std::move(path), std::move(snapshot)});
+        lock.unlock();
+        writer_cv.notify_one();
+    }
+
+    // Blocks until every enqueued auto-save has been published. Explicit slot operations call
+    // this before touching files so a pending write can never be read stale or interleave with
+    // a client save of the same path.
+    void drain_writes() {
+        std::unique_lock lock(writer_mutex);
+        writer_cv.wait(lock, [this] { return pending_writes.empty() && !write_in_flight; });
     }
 
     EngineOptions options;
@@ -156,6 +215,67 @@ public:
     LoadSummary load;
     ModelSamplingDefaults sampling_defaults;
     Executor executor;
+
+    std::mutex writer_mutex;
+    std::condition_variable writer_cv;
+    std::deque<PendingWrite> pending_writes;
+    bool write_in_flight = false;
+    bool writer_stop     = false;
+    std::thread writer;
+
+private:
+    void writer_loop() {
+        std::unique_lock lock(writer_mutex);
+        while (true) {
+            writer_cv.wait(lock, [this] { return writer_stop || !pending_writes.empty(); });
+            if (pending_writes.empty()) { break; }
+            PendingWrite item = std::move(pending_writes.front());
+            pending_writes.pop_front();
+            write_in_flight = true;
+            lock.unlock();
+
+            SlotAutoSaveEvent event;
+            event.path         = item.path;
+            event.tokens       = item.snapshot.tokens;
+            event.bytes        = item.snapshot.bytes.size();
+            const auto started = std::chrono::steady_clock::now();
+            try {
+                write_snapshot_file(item.path, item.snapshot.bytes);
+            } catch (const std::exception& error) {
+                event.error = error.what();
+            } catch (...) {
+                event.error = "unknown auto-save failure";
+            }
+            event.seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            if (options.auto_save_listener) {
+                try {
+                    options.auto_save_listener(event);
+                } catch (...) {}
+            }
+
+            lock.lock();
+            write_in_flight = false;
+            writer_cv.notify_all();
+        }
+    }
+
+    void stop_writer() noexcept {
+        {
+            std::scoped_lock lock(writer_mutex);
+            writer_stop = true;
+        }
+        writer_cv.notify_all();
+        if (writer.joinable()) {
+            try {
+                writer.join();
+            } catch (...) {}
+        }
+    }
+
+public:
+    static void write_snapshot_file(const std::string& path,
+                                    const std::vector<std::uint8_t>& bytes);
 };
 
 Engine::Engine(EngineOptions options) : impl_(std::make_shared<Impl>(std::move(options))) {}
@@ -331,6 +451,129 @@ RuntimeStats Engine::runtime_stats() const {
                 throw std::logic_error("concurrent Engine executor is unavailable");
             } else {
                 return executor->runtime_stats();
+            }
+        },
+        impl_->executor);
+}
+
+// Write-then-rename keeps a torn write from ever shadowing a good snapshot at `path`. The
+// staging name embeds the thread id so a concurrent auto-save of the same path never shares a
+// temporary file.
+void Engine::Impl::write_snapshot_file(const std::string& path,
+                                       const std::vector<std::uint8_t>& bytes) {
+    std::ostringstream staging_name;
+    staging_name << path << ".tmp." << std::this_thread::get_id();
+    const std::string staging = staging_name.str();
+    {
+        std::ofstream file(staging, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+        if (!file.good()) {
+            file.close();
+            (void)std::remove(staging.c_str());
+            throw std::invalid_argument("failed to write session snapshot file");
+        }
+    }
+    std::error_code rename_error;
+    std::filesystem::rename(staging, path, rename_error);
+    if (rename_error) {
+        (void)std::remove(staging.c_str());
+        throw std::invalid_argument("failed to publish session snapshot file: " +
+                                    rename_error.message());
+    }
+}
+
+SlotSaveResult Engine::save_slot(std::uint32_t lane, const std::string& path,
+                                 const std::string& expected_digest) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const auto started = std::chrono::steady_clock::now();
+    // A pending auto-save of the same path must not land after this explicit save.
+    impl_->drain_writes();
+    const std::string binding = slot_model_binding(impl_->load);
+    targets::qwen3_6::RetainedSessionSnapshot snapshot = std::visit(
+        [&](auto& executor) -> targets::qwen3_6::RetainedSessionSnapshot {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->save_retained_lane(lane, binding, expected_digest, path);
+            }
+        },
+        impl_->executor);
+
+    Impl::write_snapshot_file(path, snapshot.bytes);
+
+    SlotSaveResult result;
+    result.tokens         = snapshot.tokens;
+    result.bytes          = snapshot.bytes.size();
+    result.session_digest = std::move(snapshot.session_digest);
+    result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return result;
+}
+
+SlotRestoreResult Engine::restore_slot(std::uint32_t lane, const std::string& path) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const auto started = std::chrono::steady_clock::now();
+    // A restore must read the newest state, including a spill still in the writer queue.
+    impl_->drain_writes();
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        throw std::invalid_argument("session snapshot file is unavailable");
+    }
+    const std::streamsize size = file.tellg();
+    if (size <= 0) { throw std::invalid_argument("session snapshot file is empty"); }
+    std::vector<std::uint8_t> snapshot(static_cast<std::size_t>(size));
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(snapshot.data()), size);
+    if (!file.good()) { throw std::invalid_argument("failed to read session snapshot file"); }
+    file.close();
+
+    const std::string binding = slot_model_binding(impl_->load);
+    auto restored = std::visit(
+        [&](auto& executor) -> std::pair<std::uint32_t, std::string> {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->restore_retained_lane(
+                    lane, std::span<const std::uint8_t>(snapshot.data(), snapshot.size()),
+                    binding, path);
+            }
+        },
+        impl_->executor);
+
+    SlotRestoreResult result;
+    result.tokens         = restored.first;
+    result.bytes          = snapshot.size();
+    result.session_digest = std::move(restored.second);
+    result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return result;
+}
+
+std::uint32_t Engine::erase_slot(std::uint32_t lane, const std::string& expected_digest) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return std::visit(
+        [&](auto& executor) -> std::uint32_t {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->erase_retained_lane(lane, expected_digest);
+            }
+        },
+        impl_->executor);
+}
+
+std::vector<SlotState> Engine::slot_states() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return std::visit(
+        [](const auto& executor) -> std::vector<SlotState> {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->slot_states();
             }
         },
         impl_->executor);

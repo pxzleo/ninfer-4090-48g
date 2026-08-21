@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -22,6 +24,22 @@ namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+// Session identity over a ledger prefix: FNV-1a 64 of the token bytes, rendered as 16 hex
+// chars. The full-ledger form is the session_digest clients see; a ring checkpoint's digest is
+// the same hash over the prefix its frontier covers (session_snapshot_impl.h calls through
+// here for the full ledger).
+std::string ledger_prefix_digest(std::span<const TokenId> ledger) {
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto* bytes  = reinterpret_cast<const unsigned char*>(ledger.data());
+    const std::size_t count = ledger.size() * sizeof(TokenId);
+    for (std::size_t index = 0; index < count; ++index) {
+        hash = (hash ^ bytes[index]) * 1099511628211ULL;
+    }
+    char text[17];
+    std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(hash));
+    return text;
+}
 
 std::int32_t checked_i32(std::uint32_t value, const char* label) {
     if (value > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
@@ -188,7 +206,16 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
       kv_packed_k(plan.kv_packed_k), kv_e8_lattice(plan.kv_e8_lattice), kv_e8_root(plan.kv_e8_root),
       proposal_head(plan.proposal_head),
       vision_enabled(plan.features.vision),
-      use_cuda_graph(plan.use_cuda_graph), kv_payload_bytes(plan.persistent.kv_payload_bytes),
+      use_cuda_graph(plan.use_cuda_graph), checkpoint_ring_capacity(plan.turn_checkpoint_ring),
+      kv_payload_bytes(plan.persistent.kv_payload_bytes),
+      text_kv_bytes(plan.persistent.decoder.text_kv.payload_bytes()),
+      mtp_kv_bytes(plan.persistent.decoder.mtp_kv ? plan.persistent.decoder.mtp_kv->payload_bytes()
+                                                  : 0),
+      gdn_state_bytes(plan.persistent.decoder.linear_attention.payload_bytes()),
+      dflash_kv_bytes(plan.persistent.dflash ? plan.persistent.dflash->kv_payload_bytes() : 0),
+      replay_records_bytes(plan.persistent.replay_records
+                               ? plan.persistent.replay_records->payload_bytes()
+                               : 0),
       graph_allowance_bytes(plan.graph_allowance_bytes), workspace_plan(plan.workspace),
       persistent(plan.persistent.bytes), workspace_storage(plan.workspace.capacity),
       work(DeviceSpan{workspace_storage.base(), workspace_storage.capacity()}),
@@ -266,6 +293,17 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
         sequence.prefix_identity.reserve(static_cast<std::size_t>(capacity) + 1ULL);
     }
 
+    if (checkpoint_ring_capacity != 0) {
+        if (speculative_backend == SpeculativeBackend::DFlash) {
+            throw std::logic_error("turn checkpoint ring does not support the DFlash backend");
+        }
+        checkpoint_staging_store.emplace(checkpoint_entry_bytes() * max_concurrency);
+        for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+            CUDA_CHECK(cudaEventCreateWithFlags(&checkpoint_staging_events[lane],
+                                                cudaEventDisableTiming));
+        }
+    }
+
     set_device_i32(io.text_kv_table_row, 0);
     set_device_i32(io.backend_kv_table_row, 0);
 
@@ -313,6 +351,12 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
 
 ProgramImplCore::~ProgramImplCore() noexcept {
     if (device.stream != nullptr) { (void)cudaStreamSynchronize(device.stream); }
+    for (cudaEvent_t& event : checkpoint_staging_events) {
+        if (event != nullptr) {
+            (void)cudaEventDestroy(event);
+            event = nullptr;
+        }
+    }
 }
 
 bool ProgramImplCore::can_admit_lane(std::uint32_t lane, const RequestPlan& plan) const noexcept {
@@ -432,7 +476,11 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
     if (request_plan.reuse == ReusePath::RestoreTurnCheckpoint &&
         (!sequence.turn_checkpoint.valid ||
          sequence.turn_checkpoint.frontier != request_plan.reuse_base)) {
-        throw std::logic_error("planned turn checkpoint is unavailable");
+        // The planned checkpoint is not the resident one, so it must live in the host ring.
+        // Landing it in the device checkpoint slot lets the restore below run unchanged.
+        if (!upload_ring_checkpoint(sequence, request_plan.reuse_base)) {
+            throw std::logic_error("planned turn checkpoint is unavailable");
+        }
     }
     if (request_plan.turn_checkpoint_action == TurnCheckpointAction::KeepExisting &&
         (!prompt.identity.turn_rewrite_boundary || !sequence.turn_checkpoint.valid ||
@@ -459,6 +507,22 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
     request.lifecycle = Lifecycle::Empty;
     sequence.retained = false;
     try {
+        if (checkpoint_ring_capacity != 0) {
+            // Settle the staged checkpoint and the ring against this request's divergence
+            // point: entries above the reuse base describe a history this prompt rewrites.
+            if (request_plan.reuse == ReusePath::FullReset) {
+                discard_checkpoint_staging(sequence);
+                sequence.checkpoint_ring.clear();
+            } else {
+                if (checkpoint_staging[lane].pending &&
+                    checkpoint_staging[lane].frontier <= base) {
+                    drain_checkpoint_staging(sequence);
+                } else {
+                    discard_checkpoint_staging(sequence);
+                }
+                invalidate_checkpoint_ring(sequence, base);
+            }
+        }
         if (request_plan.reuse == ReusePath::FullReset) {
             sequence.kv.reset();
             ordered_reset(sequence);
@@ -840,7 +904,153 @@ void ProgramImplCore::clear_lane(SequenceState& sequence, RequestControl& reques
     sequence.tail_hidden_valid       = false;
     sequence.retained                = false;
     sequence.turn_checkpoint         = {};
+    sequence.checkpoint_ring.clear();
+    discard_checkpoint_staging(sequence);
     request.pending                  = {};
+}
+
+std::size_t ProgramImplCore::checkpoint_hidden_bytes() const noexcept {
+    return sequences[0].turn_checkpoint_hidden.bytes();
+}
+
+std::size_t ProgramImplCore::checkpoint_conv_bytes() const noexcept {
+    const LinearAttentionStatePool& states = decoder->linear_attention;
+    return states.conv_slot(0, 0).bytes() * states.layer_count();
+}
+
+std::size_t ProgramImplCore::checkpoint_recurrent_bytes() const noexcept {
+    const LinearAttentionStatePool& states = decoder->linear_attention;
+    return states.recurrent_slot(0, 0).bytes() * states.layer_count();
+}
+
+std::size_t ProgramImplCore::checkpoint_entry_bytes() const noexcept {
+    return checkpoint_hidden_bytes() + checkpoint_conv_bytes() + checkpoint_recurrent_bytes();
+}
+
+std::uint8_t* ProgramImplCore::checkpoint_staging_base(std::uint32_t lane) const noexcept {
+    return static_cast<std::uint8_t*>(checkpoint_staging_store->data()) +
+           checkpoint_entry_bytes() * lane;
+}
+
+// Enqueues a device-to-host copy of the freshly captured device checkpoint (checkpoint GDN
+// slot + boundary hidden) into the lane's pinned staging entry. Runs right after prefill
+// completes, when the stream is synchronized, so the copy overlaps the decode that follows;
+// the recorded event gates the later drain into the pageable ring.
+void ProgramImplCore::stage_turn_checkpoint(SequenceState& sequence) {
+    if (checkpoint_ring_capacity == 0 || !sequence.turn_checkpoint.valid) { return; }
+    const std::uint32_t lane     = sequence.lane;
+    CheckpointStaging& staging   = checkpoint_staging[lane];
+    staging.pending              = false;
+    const std::uint32_t frontier = sequence.turn_checkpoint.frontier;
+    if (frontier == 0 || frontier > sequence.ledger.size()) { return; }
+
+    const LinearAttentionStatePool& states = decoder->linear_attention;
+    const std::int32_t checkpoint_slot =
+        LinearStateSlots::turn_checkpoint_state_slot(lane, max_concurrency);
+    std::uint8_t* base       = checkpoint_staging_base(lane);
+    std::uint8_t* conv       = base + checkpoint_hidden_bytes();
+    std::uint8_t* recurrent  = conv + checkpoint_conv_bytes();
+    CUDA_CHECK(cudaMemcpyAsync(base, sequence.turn_checkpoint_hidden.data,
+                               checkpoint_hidden_bytes(), cudaMemcpyDeviceToHost, device.stream));
+    for (std::uint32_t layer = 0; layer < states.layer_count(); ++layer) {
+        const Tensor conv_state = states.conv_slot(layer, checkpoint_slot);
+        CUDA_CHECK(cudaMemcpyAsync(conv + layer * conv_state.bytes(), conv_state.data,
+                                   conv_state.bytes(), cudaMemcpyDeviceToHost, device.stream));
+        const Tensor recurrent_state = states.recurrent_slot(layer, checkpoint_slot);
+        CUDA_CHECK(cudaMemcpyAsync(recurrent + layer * recurrent_state.bytes(),
+                                   recurrent_state.data, recurrent_state.bytes(),
+                                   cudaMemcpyDeviceToHost, device.stream));
+    }
+    CUDA_CHECK(cudaEventRecord(checkpoint_staging_events[lane], device.stream));
+    staging.frontier       = frontier;
+    staging.session_digest = ledger_prefix_digest(
+        std::span<const TokenId>(sequence.ledger.data(), frontier));
+    staging.pending        = true;
+}
+
+// Folds the staged checkpoint into the lane's host ring once its copy has completed. Callers
+// decide validity first: a staged frontier above the request's divergence point must be
+// discarded, never drained.
+void ProgramImplCore::drain_checkpoint_staging(SequenceState& sequence) {
+    CheckpointStaging& staging = checkpoint_staging[sequence.lane];
+    if (!staging.pending) { return; }
+    staging.pending = false;
+    CUDA_CHECK(cudaEventSynchronize(checkpoint_staging_events[sequence.lane]));
+
+    HostTurnCheckpoint entry;
+    entry.frontier       = staging.frontier;
+    entry.session_digest = std::move(staging.session_digest);
+    const std::uint8_t* base = checkpoint_staging_base(sequence.lane);
+    entry.hidden.assign(base, base + checkpoint_hidden_bytes());
+    base += checkpoint_hidden_bytes();
+    entry.conv.assign(base, base + checkpoint_conv_bytes());
+    base += checkpoint_conv_bytes();
+    entry.recurrent.assign(base, base + checkpoint_recurrent_bytes());
+    append_ring_checkpoint(sequence, std::move(entry));
+}
+
+void ProgramImplCore::discard_checkpoint_staging(SequenceState& sequence) noexcept {
+    checkpoint_staging[sequence.lane].pending = false;
+}
+
+void ProgramImplCore::invalidate_checkpoint_ring(SequenceState& sequence,
+                                                 std::uint32_t keep_through) noexcept {
+    std::vector<HostTurnCheckpoint>& ring = sequence.checkpoint_ring;
+    while (!ring.empty() && ring.back().frontier > keep_through) { ring.pop_back(); }
+}
+
+// Ring maintenance mirrors llama.cpp's context checkpoints: replace a same-frontier entry,
+// fold entries that sit within the minimum step of a deeper neighbour, then drop the oldest
+// until the configured capacity holds. The newest entry always survives compaction.
+void ProgramImplCore::append_ring_checkpoint(SequenceState& sequence, HostTurnCheckpoint&& entry) {
+    std::vector<HostTurnCheckpoint>& ring = sequence.checkpoint_ring;
+    std::erase_if(ring, [&](const HostTurnCheckpoint& held) {
+        return held.frontier == entry.frontier;
+    });
+    std::uint32_t previous_kept = 0;
+    std::erase_if(ring, [&](const HostTurnCheckpoint& held) {
+        if (previous_kept != 0 && held.frontier <= previous_kept + kTurnCheckpointMinStep) {
+            return true;
+        }
+        previous_kept = held.frontier;
+        return false;
+    });
+    while (ring.size() + 1 > checkpoint_ring_capacity) { ring.erase(ring.begin()); }
+    ring.push_back(std::move(entry));
+}
+
+// Lands a host ring entry back in the lane's device checkpoint slot so the ordinary
+// RestoreTurnCheckpoint path can proceed as if the checkpoint had stayed resident.
+bool ProgramImplCore::upload_ring_checkpoint(SequenceState& sequence, std::uint32_t frontier) {
+    if (checkpoint_ring_capacity == 0) { return false; }
+    const auto entry = std::find_if(
+        sequence.checkpoint_ring.begin(), sequence.checkpoint_ring.end(),
+        [&](const HostTurnCheckpoint& held) { return held.frontier == frontier; });
+    if (entry == sequence.checkpoint_ring.end() || entry->frontier == 0 ||
+        entry->hidden.size() != checkpoint_hidden_bytes() ||
+        entry->conv.size() != checkpoint_conv_bytes() ||
+        entry->recurrent.size() != checkpoint_recurrent_bytes()) {
+        return false;
+    }
+
+    LinearAttentionStatePool& states = decoder->linear_attention;
+    const std::int32_t checkpoint_slot =
+        LinearStateSlots::turn_checkpoint_state_slot(sequence.lane, max_concurrency);
+    CUDA_CHECK(cudaMemcpyAsync(sequence.turn_checkpoint_hidden.data, entry->hidden.data(),
+                               entry->hidden.size(), cudaMemcpyHostToDevice, device.stream));
+    for (std::uint32_t layer = 0; layer < states.layer_count(); ++layer) {
+        const Tensor conv_state = states.conv_slot(layer, checkpoint_slot);
+        CUDA_CHECK(cudaMemcpyAsync(conv_state.data,
+                                   entry->conv.data() + layer * conv_state.bytes(),
+                                   conv_state.bytes(), cudaMemcpyHostToDevice, device.stream));
+        const Tensor recurrent_state = states.recurrent_slot(layer, checkpoint_slot);
+        CUDA_CHECK(cudaMemcpyAsync(recurrent_state.data,
+                                   entry->recurrent.data() + layer * recurrent_state.bytes(),
+                                   recurrent_state.bytes(), cudaMemcpyHostToDevice,
+                                   device.stream));
+    }
+    sequence.turn_checkpoint = TurnCheckpoint{.valid = true, .frontier = frontier};
+    return true;
 }
 
 qwen3_6::PagedKVCache* ProgramImplCore::backend_kv_cache() noexcept {
@@ -1654,6 +1864,9 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
                 throw std::logic_error("turn checkpoint has no complete DFlash prefix");
             }
             sequence.turn_checkpoint = TurnCheckpoint{.valid = true, .frontier = frontier};
+            // The stream was synchronized above, so this device-to-host staging copy starts on
+            // an idle stream and overlaps the decode that follows.
+            stage_turn_checkpoint(sequence);
         }
 
         if (!staged.prompt.patches.empty()) {
@@ -2200,6 +2413,11 @@ MemorySummary ProgramImplCore::memory_summary() const noexcept {
     out.cuda_graph_allowance_bytes   = graph_allowance_bytes;
     out.cuda_graph_observed_bytes    = graph_observed_bytes;
     out.kv_payload_bytes             = kv_payload_bytes;
+    out.text_kv_bytes                = text_kv_bytes;
+    out.mtp_kv_bytes                 = mtp_kv_bytes;
+    out.gdn_state_bytes              = gdn_state_bytes;
+    out.dflash_kv_bytes              = dflash_kv_bytes;
+    out.replay_records_bytes         = replay_records_bytes;
     return out;
 }
 

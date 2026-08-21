@@ -19,6 +19,7 @@
 #include "ops/kernel/gqa_attention_prefill_common.cuh"
 
 #include <cstdint>
+#include <type_traits>
 
 namespace ninfer::ops {
 
@@ -189,6 +190,10 @@ __launch_bounds__(256) __global__
             float k0_scaled = k0 * kinv;
             float k1_scaled = k1 * kinv;
             e8_project_8d_warp(k0_scaled, k1_scaled, lane);
+            // NOTE: same deliberate half-coset approximation as the rk4v4-e8 decode path
+            // (see gqa_attention_decode_i8.cuh): the D8+0.5 E8 coset is collapsed by the
+            // rintf()+cast below and never reconstructed, since no coset bit exists in the
+            // packed i4/int8 codes. The rk4v4 (non-E8) path is unaffected.
             int q0 = static_cast<int>(rintf(k0_scaled));
             int q1 = static_cast<int>(rintf(k1_scaled));
             c0 = static_cast<std::int8_t>(max(-8, min(7, q0)));
@@ -325,6 +330,10 @@ __launch_bounds__(256) __global__ void gqa_attention_prefill_fill_i8_page_kernel
             float k0_scaled = k0 * kinv;
             float k1_scaled = k1 * kinv;
             e8_project_8d_warp(k0_scaled, k1_scaled, lane);
+            // NOTE: same deliberate half-coset approximation as the rk4v4-e8 decode path
+            // (see gqa_attention_decode_i8.cuh): the D8+0.5 E8 coset is collapsed by the
+            // rintf()+cast below and never reconstructed, since no coset bit exists in the
+            // packed i4/int8 codes. The rk4v4 (non-E8) path is unaffected.
             int q0 = static_cast<int>(rintf(k0_scaled));
             int q1 = static_cast<int>(rintf(k1_scaled));
             c0 = static_cast<std::int8_t>(max(-8, min(7, q0)));
@@ -461,6 +470,11 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
     const int max_query_abs = base_pos + q0 + tile_rows - 1;
     const int key_blocks    = max_query_abs / Bc + 1;
 
+    // Leading key blocks whose every key is visible to every row of this CTA tile
+    // ((kb + 1) * Bc - 1 <= base_pos + q0). Those blocks stage and score without
+    // causal guards; the boundary blocks after them keep the exact masked path.
+    const int n_full_blocks = (q0 + Br <= tokens) ? min(key_blocks, (base_pos + q0 + 1) / Bc) : 0;
+
     // Quantize Q cooperatively. One warp owns one (row, 64-d group) at a time.
     for (int unit = warp; unit < Br * Groups; unit += kGqaPrefillI8Warps) {
         const int row = unit / Groups;
@@ -484,13 +498,16 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
     }
     __syncthreads();
 
-    auto issue_kv_tile = [&](int tile_k0) {
+    auto issue_kv_tile = [&](int tile_k0, auto full_tag) {
+        // FullTile folds every causal guard to taken and dead-codes the zero-fill
+        // paths; interior blocks stage with unconditional copies.
+        constexpr bool FullTile = decltype(full_tag)::value;
         const int physical_page = block_table[tile_k0 >> kPagedKVPageShift];
         for (int key_l = tid; key_l < Bc; key_l += kGqaPrefillI8Threads) {
             const int key = tile_k0 + key_l;
             __half* kd    = &k_scale_s[key_l * Groups];
             __half* vd    = &v_scale_s[key_l * Groups];
-            if (key <= max_query_abs) {
+            if (FullTile || key <= max_query_abs) {
                 const std::int64_t off =
                     gqa_kv_quant_scale_index<Geometry>(physical_page, kv_head, 0, key_l);
                 ninfer::ops::cp_async<8>(kd, &cache_k_scale[off]);
@@ -508,7 +525,7 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
             const int key   = tile_k0 + key_l;
             std::int8_t* kd = &k_i8[(key_l * DB16 + gqa_prefill_swz(key_l, dc * 8)) * 2];
             std::int8_t* vd = &v_i8[key_l * D + d];
-            if (key <= max_query_abs) {
+            if (FullTile || key <= max_query_abs) {
                 if constexpr (E8Root) {
                     const std::int64_t koff = paged_kv_page_head_offset<64, Geometry::KVHeads>(
                         physical_page, kv_head) + static_cast<std::int64_t>(key_l) * 64 + (d / 4);
@@ -553,7 +570,11 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
         ninfer::ops::cp_commit();
     };
 
-    issue_kv_tile(0);
+    if (n_full_blocks > 0) {
+        issue_kv_tile(0, std::true_type{});
+    } else {
+        issue_kv_tile(0, std::false_type{});
+    }
     ninfer::ops::cp_wait<0>();
     __syncthreads();
 
@@ -593,8 +614,12 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
     float running_l0     = 0.0f;
     float running_l1     = 0.0f;
     const float scale_l2 = scale * Log2E;
-    for (int kb = 0; kb < key_blocks; ++kb) {
-        const int k0 = kb * Bc;
+    // One body, two instantiations: FullTile compiles the interior-block path with no
+    // causal masking, no softmax zero-selects, and unguarded staging/dequant; the
+    // partial instantiation keeps the exact masked path for boundary blocks.
+    auto process_key_block = [&](int kb, auto full_tag) {
+        constexpr bool FullTile = decltype(full_tag)::value;
+        const int k0            = kb * Bc;
         if (warp < ProducerWarps) {
             const int row_base = (warp / ColSplit) * 16;
             const int col_half = warp % ColSplit;
@@ -668,24 +693,31 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
                 }
             }
 
-            const int row0             = row_base + gid;
-            const int row1             = row0 + 8;
-            const int qabs0            = row0 < tile_rows ? base_pos + q0 + row0 : -1;
-            const int qabs1            = row1 < tile_rows ? base_pos + q0 + row1 : -1;
-            const bool full_score_tile = q0 + Br <= tokens && k0 + Bc - 1 <= base_pos + q0;
-            float bm0                  = -CUDART_INF_F;
-            float bm1                  = -CUDART_INF_F;
+            const int row0 = row_base + gid;
+            const int row1 = row0 + 8;
+            if constexpr (!FullTile) {
+                const int qabs0 = row0 < tile_rows ? base_pos + q0 + row0 : -1;
+                const int qabs1 = row1 < tile_rows ? base_pos + q0 + row1 : -1;
+                // A boundary block can still be fully visible for a tail CTA whose
+                // n_full_blocks collapsed to zero; keep the per-block skip.
+                const bool full_score_tile = q0 + Br <= tokens && k0 + Bc - 1 <= base_pos + q0;
+                if (!full_score_tile) {
+#pragma unroll
+                    for (int ntl = 0; ntl < QKNtL; ++ntl) {
+                        const int nt   = col_half * QKNtL + ntl;
+                        const int key0 = k0 + nt * 8 + 2 * lid;
+                        const int key1 = key0 + 1;
+                        score[ntl][0]  = key0 <= qabs0 ? score[ntl][0] : -CUDART_INF_F;
+                        score[ntl][1]  = key1 <= qabs0 ? score[ntl][1] : -CUDART_INF_F;
+                        score[ntl][2]  = key0 <= qabs1 ? score[ntl][2] : -CUDART_INF_F;
+                        score[ntl][3]  = key1 <= qabs1 ? score[ntl][3] : -CUDART_INF_F;
+                    }
+                }
+            }
+            float bm0 = -CUDART_INF_F;
+            float bm1 = -CUDART_INF_F;
 #pragma unroll
             for (int ntl = 0; ntl < QKNtL; ++ntl) {
-                const int nt   = col_half * QKNtL + ntl;
-                const int key0 = k0 + nt * 8 + 2 * lid;
-                const int key1 = key0 + 1;
-                if (!full_score_tile) {
-                    score[ntl][0] = key0 <= qabs0 ? score[ntl][0] : -CUDART_INF_F;
-                    score[ntl][1] = key1 <= qabs0 ? score[ntl][1] : -CUDART_INF_F;
-                    score[ntl][2] = key0 <= qabs1 ? score[ntl][2] : -CUDART_INF_F;
-                    score[ntl][3] = key1 <= qabs1 ? score[ntl][3] : -CUDART_INF_F;
-                }
                 bm0 = fmaxf(bm0, fmaxf(score[ntl][0], score[ntl][1]));
                 bm1 = fmaxf(bm1, fmaxf(score[ntl][2], score[ntl][3]));
             }
@@ -715,20 +747,27 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
             float bl1              = 0.0f;
 #pragma unroll
             for (int ntl = 0; ntl < QKNtL; ++ntl) {
-                const int col0  = (col_half * QKNtL + ntl) * 8 + 2 * lid;
-                const int col1  = col0 + 1;
-                const float p00 = score[ntl][0] > -CUDART_INF_F
-                                      ? exp2_approx(__fmaf_rn(score[ntl][0], scale_l2, -nm0_scaled))
-                                      : 0.0f;
-                const float p01 = score[ntl][1] > -CUDART_INF_F
-                                      ? exp2_approx(__fmaf_rn(score[ntl][1], scale_l2, -nm0_scaled))
-                                      : 0.0f;
-                const float p10 = score[ntl][2] > -CUDART_INF_F
-                                      ? exp2_approx(__fmaf_rn(score[ntl][2], scale_l2, -nm1_scaled))
-                                      : 0.0f;
-                const float p11 = score[ntl][3] > -CUDART_INF_F
-                                      ? exp2_approx(__fmaf_rn(score[ntl][3], scale_l2, -nm1_scaled))
-                                      : 0.0f;
+                const int col0 = (col_half * QKNtL + ntl) * 8 + 2 * lid;
+                float p00, p01, p10, p11;
+                if constexpr (FullTile) {
+                    p00 = exp2_approx(__fmaf_rn(score[ntl][0], scale_l2, -nm0_scaled));
+                    p01 = exp2_approx(__fmaf_rn(score[ntl][1], scale_l2, -nm0_scaled));
+                    p10 = exp2_approx(__fmaf_rn(score[ntl][2], scale_l2, -nm1_scaled));
+                    p11 = exp2_approx(__fmaf_rn(score[ntl][3], scale_l2, -nm1_scaled));
+                } else {
+                    p00 = score[ntl][0] > -CUDART_INF_F
+                              ? exp2_approx(__fmaf_rn(score[ntl][0], scale_l2, -nm0_scaled))
+                              : 0.0f;
+                    p01 = score[ntl][1] > -CUDART_INF_F
+                              ? exp2_approx(__fmaf_rn(score[ntl][1], scale_l2, -nm0_scaled))
+                              : 0.0f;
+                    p10 = score[ntl][2] > -CUDART_INF_F
+                              ? exp2_approx(__fmaf_rn(score[ntl][2], scale_l2, -nm1_scaled))
+                              : 0.0f;
+                    p11 = score[ntl][3] > -CUDART_INF_F
+                              ? exp2_approx(__fmaf_rn(score[ntl][3], scale_l2, -nm1_scaled))
+                              : 0.0f;
+                }
                 bl0 += p00 + p01;
                 bl1 += p10 + p11;
                 // The swizzle keeps even/odd column pairs adjacent, so store one half2.
@@ -759,7 +798,7 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
                 const int d     = dc * 8;
                 const int key   = k0 + key_l;
                 __half* dst     = &v_f16[key_l * D + gqa_prefill_swz(key_l, d)];
-                if (key <= max_query_abs) {
+                if (FullTile || key <= max_query_abs) {
                     const int grp = d >> 6;
                     __half vs     = __float2half_rn(0.0f);
                     if ((lane & 7) == 0) { vs = v_scale_s[key_l * Groups + grp]; }
@@ -773,7 +812,13 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
         __syncthreads();
 
         const bool has_next = kb + 1 < key_blocks;
-        if (has_next) { issue_kv_tile((kb + 1) * Bc); }
+        if (has_next) {
+            if (kb + 1 < n_full_blocks) {
+                issue_kv_tile((kb + 1) * Bc, std::true_type{});
+            } else {
+                issue_kv_tile((kb + 1) * Bc, std::false_type{});
+            }
+        }
 
         const int row_tile = warp % kGqaPrefillI8RowTiles;
         const int d_slice  = warp / kGqaPrefillI8RowTiles;
@@ -832,7 +877,10 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
 #endif
         if (has_next) { ninfer::ops::cp_wait<0>(); }
         __syncthreads();
-    }
+    };
+
+    for (int kb = 0; kb < n_full_blocks; ++kb) { process_key_block(kb, std::true_type{}); }
+    for (int kb = n_full_blocks; kb < key_blocks; ++kb) { process_key_block(kb, std::false_type{}); }
 
     if constexpr (ColSplit == 2) {
         if (warp < ProducerWarps && lid == 0) {
@@ -862,17 +910,19 @@ __global__ __maxnreg__(NINFER_GQA_PREFILL_I8_MAXNREG) void gqa_attention_prefill
     const int row1     = row0 + 8;
     const float inv_l0 = final_l_s[row0] > 0.0f ? __frcp_rn(final_l_s[row0]) : 0.0f;
     const float inv_l1 = final_l_s[row1] > 0.0f ? __frcp_rn(final_l_s[row1]) : 0.0f;
+    __nv_bfloat16* out_row0 =
+        row0 < tile_rows ? out + gqa_prefill_q_row_offset<Geometry>(q_head, q0 + row0) : nullptr;
+    __nv_bfloat16* out_row1 =
+        row1 < tile_rows ? out + gqa_prefill_q_row_offset<Geometry>(q_head, q0 + row1) : nullptr;
 #pragma unroll
     for (int n = 0; n < PVNtPerWarp; ++n) {
         const int d0 = (d_slice * PVNtPerWarp + n) * 8 + 2 * lid;
-        if (row0 < tile_rows) {
-            *reinterpret_cast<unsigned*>(
-                &out[gqa_prefill_q_index<Geometry>(q_head, d0, q0 + row0)]) =
+        if (out_row0 != nullptr) {
+            *reinterpret_cast<unsigned*>(&out_row0[d0]) =
                 pack_bf16x2(acc[n][0] * inv_l0, acc[n][1] * inv_l0);
         }
-        if (row1 < tile_rows) {
-            *reinterpret_cast<unsigned*>(
-                &out[gqa_prefill_q_index<Geometry>(q_head, d0, q0 + row1)]) =
+        if (out_row1 != nullptr) {
+            *reinterpret_cast<unsigned*>(&out_row1[d0]) =
                 pack_bf16x2(acc[n][2] * inv_l1, acc[n][3] * inv_l1);
         }
     }

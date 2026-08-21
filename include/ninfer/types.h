@@ -72,6 +72,16 @@ struct LoadProgress {
     std::function<void(std::string_view phase, std::uint64_t done, std::uint64_t total)> callback;
 };
 
+// Outcome of one background auto-save of an involuntarily evicted session. Delivered on the
+// Engine's writer thread; the listener must be thread-safe.
+struct SlotAutoSaveEvent {
+    std::string path;
+    std::uint32_t tokens = 0;
+    std::size_t bytes    = 0;
+    double seconds       = 0.0;
+    std::string error; // empty on success
+};
+
 struct EngineOptions {
     std::filesystem::path artifact_path;
     int device                         = 0;
@@ -81,9 +91,24 @@ struct EngineOptions {
     std::uint32_t max_pending_requests = 16;
     std::uint32_t pending_timeout_ms   = 30000;
     std::uint32_t prefill_chunk        = 1024;
+    // Retained host-side turn checkpoints per lane (0 disables the ring). Each entry snapshots
+    // the linear-attention state at a past turn boundary so a prompt that diverges mid-history
+    // re-prefills from the nearest checkpoint instead of from zero. Host memory cost per entry
+    // is the model's full GDN state image (~147 MiB on Qwen3.8-27B).
+    std::uint32_t turn_checkpoint_ring = 0;
+    // Before an involuntary eviction destroys a retained session, snapshot it back to the slot
+    // file it was last saved to or restored from (sessions that never touched a slot file are
+    // not covered). The device snapshot runs on the eviction path; the file write runs on a
+    // background writer thread. Explicit erase never auto-saves.
+    bool auto_save_evicted = false;
+    // Optional observer for auto-save outcomes; called on the writer thread.
+    std::function<void(const SlotAutoSaveEvent&)> auto_save_listener;
     KvCacheStorage kv_cache            = KvCacheStorage::BFloat16;
     SpeculativeOptions speculative;
-    bool enable_vision  = false;
+    bool enable_vision                 = false;
+    std::uint32_t vision_max_tokens    = 8192;
+    // Per-image serving ceiling in Vision tokens. Zero keeps the artifact's own ceiling.
+    std::uint32_t image_token_budget   = 0;
     bool use_cuda_graph = true;
     LoadProgress load_progress;
 };
@@ -367,6 +392,10 @@ struct GenerationResult {
     PrefixReusePath prefix_reuse_path  = PrefixReusePath::FullReset;
     GenerationTimings timings;
     SpeculativeStats speculative;
+    // Lane that served the request and, when it retained the finished session, that session's
+    // identifying digest (see SlotState) - the handle a client needs for /slots operations.
+    std::int32_t slot = -1;
+    std::string session_digest;
 };
 
 struct ArenaMemorySummary {
@@ -398,6 +427,11 @@ struct MemorySummary {
     std::size_t cuda_graph_allowance_bytes        = 0;
     std::size_t cuda_graph_observed_bytes         = 0;
     std::size_t kv_payload_bytes                  = 0;
+    std::size_t text_kv_bytes                     = 0;
+    std::size_t mtp_kv_bytes                      = 0;
+    std::size_t gdn_state_bytes                   = 0;
+    std::size_t dflash_kv_bytes                   = 0;
+    std::size_t replay_records_bytes              = 0;
 };
 
 struct KvCacheUsage {
@@ -426,6 +460,10 @@ struct RuntimeStats {
     std::uint64_t computed_prefill_tokens = 0;
     // Tokens committed by decode rounds; the first token emitted by prefill is excluded.
     std::uint64_t committed_decode_tokens = 0;
+    // Cumulative wall time of prefill and decode execution units. Advances with every unit,
+    // so counter scrapers see rates move during a request rather than at its completion.
+    double prefill_seconds_total = 0.0;
+    double decode_seconds_total  = 0.0;
     // Decode batch executions and the sum of their batch sizes.
     std::uint64_t decode_rounds         = 0;
     std::uint64_t decode_row_rounds     = 0;
@@ -435,6 +473,51 @@ struct RuntimeStats {
     std::uint32_t waiting_requests      = 0;
     KvCacheUsage kv_cache;
     std::array<RuntimeSlotStats, kMaximumConcurrency> slots{};
+};
+
+// Session persistence outcomes. Tokens count the resident session depth moved; bytes count the
+// snapshot file payload on disk; session_digest identifies the session (see SlotState).
+struct SlotSaveResult {
+    std::uint32_t tokens = 0;
+    std::uint64_t bytes  = 0;
+    double seconds       = 0.0;
+    std::string session_digest;
+};
+
+struct SlotRestoreResult {
+    std::uint32_t tokens = 0;
+    std::uint64_t bytes  = 0;
+    double seconds       = 0.0;
+    std::string session_digest;
+};
+
+// One retained turn checkpoint of a resident session: the ledger depth it rewinds to and the
+// digest of the ledger prefix up to that frontier (same FNV-1a 64 hex encoding as
+// SlotState::session_digest, computed over the prefix only).
+struct SlotCheckpoint {
+    std::uint32_t frontier = 0;
+    std::string session_digest;
+};
+
+// One Engine lane's occupancy for /slots-style reporting: an active request's prompt size, or
+// the retained resident session. session_digest is a stable identifier of the exact resident
+// token ledger (FNV-1a 64 as 16 hex chars) - equal digests mean the identical session; clients
+// treat it as opaque and may pass it back as a slot-operation precondition. checkpoints lists
+// the retained turn checkpoints (oldest first) a diverging prompt can restore from.
+struct SlotState {
+    bool processing              = false;
+    bool retained                = false;
+    std::uint32_t prompt_tokens  = 0;
+    std::uint32_t cached_tokens  = 0;
+    std::string session_digest;
+    std::vector<SlotCheckpoint> checkpoints;
+};
+
+// Raised when a slot operation's session precondition (if_digest) does not match the lane's
+// resident session.
+class SlotSessionMismatch final : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
 };
 
 struct LoadSummary {

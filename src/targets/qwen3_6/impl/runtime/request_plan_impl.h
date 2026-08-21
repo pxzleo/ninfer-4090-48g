@@ -195,6 +195,20 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
                                                    sequence.turn_checkpoint.frontier)) {
             plan->reuse      = ReusePath::RestoreTurnCheckpoint;
             plan->reuse_base = sequence.turn_checkpoint.frontier;
+        } else {
+            // Deepest-first walk of the host checkpoint ring: a prompt that diverged before
+            // the resident checkpoint can still restore at an older turn boundary. Execution
+            // re-lands the matched entry in the device checkpoint slot.
+            for (auto entry = sequence.checkpoint_ring.rbegin();
+                 entry != sequence.checkpoint_ring.rend(); ++entry) {
+                if (entry->frontier != 0 && entry->frontier < prompt.token_ids.size() &&
+                    qwen3_6::detail::prefix_matches(prompt, sequence.ledger,
+                                                    sequence.prefix_identity, entry->frontier)) {
+                    plan->reuse      = ReusePath::RestoreTurnCheckpoint;
+                    plan->reuse_base = entry->frontier;
+                    break;
+                }
+            }
         }
     }
 

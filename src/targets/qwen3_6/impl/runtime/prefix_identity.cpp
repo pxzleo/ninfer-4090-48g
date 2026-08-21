@@ -99,6 +99,27 @@ void ResidentPrefixIdentity::append_generated(std::size_t count, std::int32_t ro
     }
 }
 
+void ResidentPrefixIdentity::restore(std::vector<std::uint8_t> token_types,
+                                     std::array<std::vector<std::int32_t>, 3> positions,
+                                     std::vector<VisionItem> vision_items) {
+    const std::size_t tokens = token_types.size();
+    for (const auto& axis : positions) {
+        if (axis.size() != tokens) {
+            throw std::invalid_argument("restored prefix identity axes have inconsistent shapes");
+        }
+    }
+    std::size_t prefix_items = 0;
+    if (!prefix_item_count(vision_items, tokens, &prefix_items) ||
+        prefix_items != vision_items.size()) {
+        throw std::invalid_argument("restored prefix identity vision items exceed its tokens");
+    }
+    token_types_ = std::move(token_types);
+    for (std::size_t axis = 0; axis < positions_.size(); ++axis) {
+        positions_[axis] = std::move(positions[axis]);
+    }
+    vision_items_ = std::move(vision_items);
+}
+
 void ResidentPrefixIdentity::truncate(std::size_t tokens) {
     if (tokens > size()) {
         throw std::out_of_range("cannot extend resident prefix identity by truncation");

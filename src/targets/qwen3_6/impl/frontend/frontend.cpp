@@ -41,6 +41,10 @@ constexpr double kVideoFps             = 2.0;
 constexpr int kVideoMinFrames          = 4;
 constexpr int kVideoMaxFrames          = 768;
 
+// validate_pixel_pipeline() pins patch_size to 16 and merge_size to 2, so one Vision token
+// always covers a 32x32 pixel square.
+constexpr std::uint64_t kPixelsPerVisionToken = (16ULL * 2ULL) * (16ULL * 2ULL);
+
 constexpr std::array<std::pair<std::string_view, TokenId>, 4> kVisionSpecialTokens = {{
     {"<|vision_start|>", 248053},
     {"<|vision_end|>", 248054},
@@ -140,7 +144,8 @@ void validate_pixel_pipeline(const Json& config, std::string_view resource) {
     }
 }
 
-fi::ProcessorOptions processor_options(const FrontendResources& resources) {
+fi::ProcessorOptions processor_options(const FrontendResources& resources,
+                                       std::uint32_t image_token_budget) {
     const Json image =
         parse_resource_json(resources.preprocessor_config_json, "preprocessor_config.json");
     const Json video = parse_resource_json(resources.video_preprocessor_config_json,
@@ -158,6 +163,11 @@ fi::ProcessorOptions processor_options(const FrontendResources& resources) {
     options.image_max_pixels =
         positive_u64(require_integer(image_size, "longest_edge", "preprocessor_config.json.size"),
                      "image longest_edge");
+    if (image_token_budget != 0) {
+        options.image_max_pixels =
+            std::min(options.image_max_pixels,
+                     static_cast<std::uint64_t>(image_token_budget) * kPixelsPerVisionToken);
+    }
     options.video_min_pixels = positive_u64(
         require_integer(video_size, "shortest_edge", "video_preprocessor_config.json.size"),
         "video shortest_edge");
@@ -593,13 +603,19 @@ DecoderState terminal_state(DecoderState state) {
 
 class Frontend::Impl {
 public:
-    Impl(const FrontendResources& resources, bool registered_checkpoint, bool vision_enabled_)
+    Impl(const FrontendResources& resources, bool registered_checkpoint, bool vision_enabled_,
+         std::uint32_t vision_max_tokens_, std::uint32_t image_token_budget)
         : chat_template(compile_chat_template(resources)),
           tokenizer(std::make_shared<const fi::Tokenizer>(
               fi::TokenizerResources{.tokenizer_json         = resources.tokenizer_json,
                                      .tokenizer_config_json  = resources.tokenizer_config_json,
                                      .generation_config_json = resources.generation_config_json})),
-          processor(processor_options(resources)), vision_enabled(vision_enabled_) {
+          processor(processor_options(resources, image_token_budget)),
+          vision_enabled(vision_enabled_) {
+        // The vision encode workspace is sized to vision_max_tokens; keep the processor
+        // budget in lockstep so oversized media fails as MediaBudgetExceeded before it
+        // reaches the encoder.
+        if (vision_max_tokens_ > 0) { processor.max_vision_tokens = vision_max_tokens_; }
         if (registered_checkpoint) { validate_registered_tokenizer(*tokenizer); }
         for (const int token : tokenizer->default_stop_token_ids()) {
             if (!tokenizer->is_valid_token(token)) {
@@ -806,13 +822,17 @@ Frontend::Frontend(Frontend&&) noexcept            = default;
 Frontend& Frontend::operator=(Frontend&&) noexcept = default;
 Frontend::~Frontend()                              = default;
 
-Frontend make_frontend(const FrontendResources& resources, bool vision_enabled) {
-    return Frontend(std::make_shared<const Frontend::Impl>(resources, true, vision_enabled));
+Frontend make_frontend(const FrontendResources& resources, bool vision_enabled,
+                       std::uint32_t vision_max_tokens, std::uint32_t image_token_budget) {
+    return Frontend(std::make_shared<const Frontend::Impl>(resources, true, vision_enabled,
+                                                           vision_max_tokens, image_token_budget));
 }
 
 Frontend FrontendTestAccess::create_component(const FrontendResources& resources,
-                                              bool vision_enabled) {
-    return Frontend(std::make_shared<const Frontend::Impl>(resources, false, vision_enabled));
+                                              bool vision_enabled,
+                                              std::uint32_t vision_max_tokens) {
+    return Frontend(std::make_shared<const Frontend::Impl>(resources, false, vision_enabled,
+                                                           vision_max_tokens, 0));
 }
 
 const PreparedPromptData& PreparedPromptAccess::view(const PreparedPrompt& prompt) {

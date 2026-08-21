@@ -380,6 +380,7 @@ std::string format_server_start_json(
                               {"cors_enabled", options.enable_cors},
                               {"max_request_bytes", options.max_request_bytes},
                               {"request_log_jsonl", options.request_log_jsonl},
+                              {"slot_save_path", options.slot_save_path},
                               {"default_output_tokens", options.default_max_tokens},
                               {"default_thinking", options.enable_thinking},
                               {"default_preserve_thinking", options.preserve_thinking}};
@@ -408,6 +409,7 @@ std::string format_server_start_json(
           {"log_stats_interval_ms", options.log_stats_interval_ms},
           {"kv_cache", kv_cache_name(options.kv_cache)},
           {"vision", options.enable_vision},
+          {"image_token_budget", options.image_token_budget},
           {"cuda_graph", options.use_cuda_graph},
           {"prefix_reuse", options.allow_prefix_reuse},
           {"speculative_backend", product::speculative_backend_name(options.speculative.backend)},

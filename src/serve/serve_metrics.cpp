@@ -43,15 +43,9 @@ void ServeMetrics::record(const GenerationOutcome& outcome) {
     const std::uint64_t prompt = outcome.prompt_tokens > 0
                                      ? static_cast<std::uint64_t>(outcome.prompt_tokens)
                                      : 0;
-    const std::uint64_t computed_prefill = prompt > cached ? prompt - cached : 0;
 
     const std::lock_guard<std::mutex> lock(mutex_);
     requests_total_ += 1;
-    prompt_tokens_total_ += computed_prefill;
-    prompt_seconds_total_ += std::max(0.0, m.prefill_seconds);
-    tokens_predicted_total_ +=
-        outcome.completion_tokens > 0 ? static_cast<std::uint64_t>(outcome.completion_tokens) : 0;
-    tokens_predicted_seconds_total_ += std::max(0.0, m.decode_seconds);
     prefix_cache_hit_tokens_total_ += cached;
     speculative_draft_tokens_total_ += m.speculative_draft_tokens;
     speculative_accepted_tokens_total_ += m.speculative_accepted_tokens;
@@ -67,16 +61,16 @@ ServeMetrics::LastCompleted ServeMetrics::last_completed() const {
 }
 
 std::string ServeMetrics::render(std::uint32_t max_concurrency,
-                                 const RuntimeStats& runtime) const {
+                                 const ninfer::RuntimeStats& live) const {
     const std::lock_guard<std::mutex> lock(mutex_);
     const std::uint64_t in_flight  = active_.size();
     const std::uint64_t processing = std::min<std::uint64_t>(in_flight, max_concurrency);
     std::string out;
     out.reserve(704);
-    append_counter(out, "llamacpp:prompt_tokens_total", prompt_tokens_total_);
-    append_counter(out, "llamacpp:prompt_seconds_total", prompt_seconds_total_);
-    append_counter(out, "llamacpp:tokens_predicted_total", tokens_predicted_total_);
-    append_counter(out, "llamacpp:tokens_predicted_seconds_total", tokens_predicted_seconds_total_);
+    append_counter(out, "llamacpp:prompt_tokens_total", live.computed_prefill_tokens);
+    append_counter(out, "llamacpp:prompt_seconds_total", live.prefill_seconds_total);
+    append_counter(out, "llamacpp:tokens_predicted_total", live.committed_decode_tokens);
+    append_counter(out, "llamacpp:tokens_predicted_seconds_total", live.decode_seconds_total);
     append_counter(out, "llamacpp:requests_processing", processing);
     append_counter(out, "llamacpp:requests_deferred", in_flight - processing);
     append_counter(out, "ninfer:requests_total", requests_total_);
@@ -84,9 +78,9 @@ std::string ServeMetrics::render(std::uint32_t max_concurrency,
     append_counter(out, "ninfer:draft_tokens_total", speculative_draft_tokens_total_);
     append_counter(out, "ninfer:draft_accepted_tokens_total", speculative_accepted_tokens_total_);
     append_counter(out, "ninfer:kv_cache_used_tokens",
-                   static_cast<std::uint64_t>(runtime.kv_cache.used_tokens));
+                   static_cast<std::uint64_t>(live.kv_cache.used_tokens));
     append_counter(out, "ninfer:kv_cache_capacity_tokens",
-                   static_cast<std::uint64_t>(runtime.kv_cache.capacity_tokens));
+                   static_cast<std::uint64_t>(live.kv_cache.capacity_tokens));
     return out;
 }
 

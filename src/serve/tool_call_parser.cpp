@@ -8,7 +8,10 @@
 #include <cstdio>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <unordered_set>
+#include <vector>
 
 namespace ninfer::serve {
 namespace {
@@ -64,7 +67,8 @@ std::string new_tool_call_id() {
     return std::string(buf.data());
 }
 
-bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args) {
+bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args,
+                     const std::string& tool_name, const ToolParamTypeMap& param_types) {
     constexpr std::string_view kParamOpen  = "<parameter=";
     constexpr std::string_view kParamClose = "</parameter>";
     if (!starts_with_at(inner, pos, kParamOpen)) { return false; }
@@ -76,13 +80,17 @@ bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args) {
     const std::size_t value_end = inner.find(kParamClose, pos);
     if (value_end == std::string_view::npos) { return false; }
     const std::string raw_value = trim_ascii(inner.substr(pos, value_end - pos));
-    Json parsed                 = Json::parse(raw_value, nullptr, false);
-    args[key]                   = parsed.is_discarded() ? Json(raw_value) : parsed;
+    Json parsed = Json::parse(raw_value, nullptr, false);
+    const auto tool_it = param_types.find(tool_name);
+    const bool allow_deserialization =
+        tool_it != param_types.end() && tool_it->second.contains(key);
+    args[key] = parsed.is_discarded() || !allow_deserialization ? Json(raw_value) : parsed;
     pos                         = value_end + kParamClose.size();
     return true;
 }
 
-bool parse_one_tool_call(std::string_view block, std::size_t max_name_length, ToolCall& out) {
+bool parse_one_tool_call(std::string_view block, std::size_t max_name_length,
+                         const ToolParamTypeMap& param_types, ToolCall& out) {
     constexpr std::string_view kFunctionOpen  = "<function=";
     constexpr std::string_view kFunctionClose = "</function>";
     std::size_t pos                           = 0;
@@ -103,7 +111,7 @@ bool parse_one_tool_call(std::string_view block, std::size_t max_name_length, To
     for (;;) {
         skip_ws(params, param_pos);
         if (param_pos >= params.size()) { break; }
-        if (!parse_parameter(params, param_pos, args)) { return false; }
+        if (!parse_parameter(params, param_pos, args, name, param_types)) { return false; }
     }
 
     pos = function_end + kFunctionClose.size();
@@ -124,8 +132,50 @@ ParsedToolCallOutput fallback(const std::string& text) {
 
 } // namespace
 
+ToolParamTypeMap build_tool_param_type_map(const std::vector<ToolDefinition>& tools) {
+    static const std::unordered_set<std::string> non_string_types = {
+        "integer", "number", "boolean", "array", "object", "null"};
+    ToolParamTypeMap result;
+    for (const ToolDefinition& tool : tools) {
+        auto& allowed = result[tool.name];
+        allowed.clear();
+        const Json schema = Json::parse(tool.parameters_json, nullptr, false);
+        if (!schema.is_object() || !schema.contains("properties") ||
+            !schema.at("properties").is_object()) {
+            continue;
+        }
+        for (const auto& [name, spec] : schema.at("properties").items()) {
+            if (!spec.is_object() || !spec.contains("type")) { continue; }
+            std::vector<std::string> types;
+            const Json& declared = spec.at("type");
+            if (declared.is_string()) {
+                types.push_back(declared.get<std::string>());
+            } else if (declared.is_array() && !declared.empty()) {
+                bool valid = true;
+                for (const Json& type : declared) {
+                    if (!type.is_string()) {
+                        valid = false;
+                        break;
+                    }
+                    types.push_back(type.get<std::string>());
+                }
+                if (!valid) { continue; }
+            } else {
+                continue;
+            }
+            if (std::all_of(types.begin(), types.end(), [&](const std::string& type) {
+                    return non_string_types.contains(type);
+                })) {
+                allowed.insert(name);
+            }
+        }
+    }
+    return result;
+}
+
 ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
-                                                 std::size_t max_tool_name_length) {
+                                                 std::size_t max_tool_name_length,
+                                                 const ToolParamTypeMap& param_types) {
     constexpr std::string_view kToolOpen  = "<tool_call>";
     constexpr std::string_view kToolClose = "</tool_call>";
 
@@ -145,7 +195,7 @@ ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
         if (close == std::string::npos) { return fallback(text); }
         ToolCall call;
         if (!parse_one_tool_call(std::string_view(text).substr(inner_begin, close - inner_begin),
-                                 max_tool_name_length, call)) {
+                                 max_tool_name_length, param_types, call)) {
             return fallback(text);
         }
         out.tool_calls.push_back(std::move(call));

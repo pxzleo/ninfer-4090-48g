@@ -157,6 +157,9 @@ ninfer_add_test(ninfer_tool_call_parser_test
 ninfer_add_test(ninfer_serve_options_test
   SOURCES test_serve_options.cpp
   LIBRARIES ninfer_serve)
+ninfer_add_test(ninfer_slot_files_test
+  SOURCES test_slot_files.cpp
+  LIBRARIES ninfer_serve)
 ninfer_add_test(ninfer_request_log_test
   SOURCES test_request_log.cpp
   LIBRARIES ninfer_serve)
@@ -211,6 +214,9 @@ ninfer_add_op_test(ninfer_swa_test
   LIBRARIES ninfer_ops)
 ninfer_add_op_test(ninfer_kv_cache_append_prefix_test
   SOURCES ops/test_kv_cache_append_prefix.cpp
+  LIBRARIES ninfer_ops)
+ninfer_add_op_test(ninfer_e8_root_codec_test
+  SOURCES ops/test_e8_root_codec.cu
   LIBRARIES ninfer_ops)
 ninfer_add_op_test(ninfer_prepare_masked_block_test
   SOURCES ops/test_prepare_masked_block.cpp
@@ -301,6 +307,11 @@ target_include_directories(ninfer_test_e8_codec PRIVATE
   ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(ninfer_test_e8_codec PRIVATE CUDA::cudart)
 set_target_properties(ninfer_test_e8_codec PROPERTIES CUDA_ARCHITECTURES "89")
+# The testbed carries its own reference implementation of the E8 mathematics and does not
+# include src/ops/kernel/e8_root_codec.cuh, so this is an algorithm oracle, not coverage of
+# the shipped codec. ninfer_e8_root_codec_test below drives the production header.
+add_test(NAME ninfer_test_e8_codec COMMAND ninfer_test_e8_codec)
+set_tests_properties(ninfer_test_e8_codec PROPERTIES SKIP_RETURN_CODE 77)
 
 # These tests deliberately compile against the exact target's internal contracts; the target does
 # not export impl/ to ordinary consumers.

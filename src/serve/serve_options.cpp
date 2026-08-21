@@ -78,12 +78,14 @@ std::string serve_usage_text(const char* argv0) {
            " <model.ninfer> [--host H] [--port N] [--api-key KEY] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
-           "[--prefill-chunk N] [--log-stats-interval-ms N] [--device N] "
-           "[--max-request-mib N] [--request-log-jsonl FILE] "
+           "[--prefill-chunk N] [--turn-checkpoints N] [--log-stats-interval-ms N] [--device N] "
+           "[--max-request-mib N] [--request-log-jsonl FILE] [--slot-save-path DIR] "
+           "[--auto-save-evicted] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8|rk8v4|rk4v4|rk4v4-e8|rk2v4-e8] [--spec mtp|dflash --draft-tokens N] "
            "[--default-max-tokens N] "
-           "[--vision] [--no-cuda-graph] [--no-prefix-reuse] "
+           "[--vision] [--vision-max-tokens N] [--image-token-budget N] "
+           "[--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--reasoning-effort low|medium|xhigh] "
            "[--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
@@ -94,11 +96,23 @@ std::string serve_usage_text(const char* argv0) {
            " when omitted\n"
            "       --max-request-mib defaults to 384 and is enforced before JSON parsing\n"
            "       --request-log-jsonl appends full-precision server/request records\n"
+           "       --slot-save-path enables llama.cpp-style session persistence: POST "
+           "/slots/{id}?action=save|restore|erase with {\"filename\": NAME} moves one idle "
+           "slot's resident session to or from DIR (disabled when omitted)\n"
+           "       --turn-checkpoints retains N host turn checkpoints per slot so a prompt "
+           "that diverges mid-history re-prefills from the nearest checkpoint instead of from "
+           "zero (0 disables; each entry holds the full GDN state image in host memory)\n"
+           "       --auto-save-evicted spills an involuntarily evicted session back to the "
+           "slot file it was last saved to or restored from, before the eviction destroys it "
+           "(requires --slot-save-path; explicit erase never auto-saves)\n"
            "       --model-id overrides the artifact identity.model_id reported by the server\n"
            "       Responses state is process-local and bounded to 1024 records / 256 MiB by "
            "default\n"
            "       --log-stats-interval-ms defaults to 5000; 0 disables periodic throughput logs\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
+           "       --vision-max-tokens sets the Vision scratchpad token capacity (default 8192)\n"
+           "       --image-token-budget caps each image in 32x32 Vision tokens by scaling it to "
+           "fit; 0 keeps the artifact ceiling\n"
            "       --kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom\n"
@@ -165,6 +179,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--prefill-chunk"), "prefill-chunk"));
+        } else if (arg == "--turn-checkpoints") {
+            options.turn_checkpoint_ring = static_cast<std::uint32_t>(
+                parse_nonnegative_int(require_value("--turn-checkpoints"), "turn-checkpoints"));
+        } else if (arg == "--auto-save-evicted") {
+            options.auto_save_evicted = true;
         } else if (arg == "--log-stats-interval-ms") {
             options.log_stats_interval_ms = static_cast<std::uint32_t>(parse_nonnegative_int(
                 require_value("--log-stats-interval-ms"), "log-stats-interval-ms"));
@@ -179,6 +198,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.request_log_jsonl = require_value("--request-log-jsonl");
             if (options.request_log_jsonl.empty()) {
                 throw std::invalid_argument("--request-log-jsonl must not be empty");
+            }
+        } else if (arg == "--slot-save-path") {
+            options.slot_save_path = require_value("--slot-save-path");
+            if (options.slot_save_path.empty()) {
+                throw std::invalid_argument("--slot-save-path must not be empty");
             }
         } else if (arg == "--response-store-max-records") {
             const int records = parse_nonnegative_int(require_value("--response-store-max-records"),
@@ -210,6 +234,16 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             default_max_tokens_explicit = true;
         } else if (arg == "--vision") {
             options.enable_vision = true;
+        } else if (arg == "--vision-max-tokens" || arg == "--vision-limit") {
+            const int val = parse_nonnegative_int(require_value(arg.c_str()), "vision-max-tokens");
+            if (val <= 0) {
+                throw std::invalid_argument(std::string(arg) + " must be positive");
+            }
+            options.vision_max_tokens = static_cast<std::uint32_t>(val);
+            options.enable_vision     = true;
+        } else if (arg == "--image-token-budget") {
+            options.image_token_budget = static_cast<std::uint32_t>(
+                parse_nonnegative_int(require_value("--image-token-budget"), "image-token-budget"));
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--no-prefix-reuse") {
@@ -252,6 +286,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
+    }
+    if (options.auto_save_evicted && options.slot_save_path.empty()) {
+        throw std::invalid_argument("--auto-save-evicted requires --slot-save-path");
     }
     if (options.port <= 0 || options.port > 65535) {
         throw std::invalid_argument("--port must be in [1,65535]");

@@ -17,6 +17,9 @@ int fail(const std::string& message) {
 int check(bool condition, const std::string& message) { return condition ? 0 : fail(message); }
 
 int test_single_call() {
+    const std::vector<ninfer::serve::ToolDefinition> tools = {{
+        "get_weather", "", R"({"type":"object","properties":{"city":{"type":"string"},"days":{"type":"integer"}}})"}};
+    const auto param_types = ninfer::serve::build_tool_param_type_map(tools);
     const ninfer::serve::ParsedToolCallOutput parsed =
         ninfer::serve::parse_qwen_tool_call_output("Calling weather.\n"
                                                    "<tool_call>\n"
@@ -25,7 +28,7 @@ int test_single_call() {
                                                    "<parameter=days>\n2\n</parameter>\n"
                                                    "</function>\n"
                                                    "</tool_call>",
-                                                   64);
+                                                   64, param_types);
 
     int failures = 0;
     failures += check(parsed.is_tool_call_response, "single call parsed as tool response");
@@ -40,6 +43,10 @@ int test_single_call() {
 }
 
 int test_multiple_calls_and_json_values() {
+    const std::vector<ninfer::serve::ToolDefinition> tools = {
+        {"first", "", R"({"type":"object","properties":{"payload":{"type":"object"}}})"},
+        {"second", "", R"({"type":"object","properties":{"value":{"type":"string"}}})"}};
+    const auto param_types = ninfer::serve::build_tool_param_type_map(tools);
     const ninfer::serve::ParsedToolCallOutput parsed = ninfer::serve::parse_qwen_tool_call_output(
         "<tool_call>\n"
         "<function=first>\n"
@@ -51,7 +58,7 @@ int test_multiple_calls_and_json_values() {
         "<parameter=value>\nplain text\n</parameter>\n"
         "</function>\n"
         "</tool_call>",
-        64);
+        64, param_types);
 
     int failures = 0;
     failures += check(parsed.is_tool_call_response, "multiple calls parsed as tool response");
@@ -63,6 +70,23 @@ int test_multiple_calls_and_json_values() {
     failures += check(first.at("payload").at("items").at(1) == 2, "object parameter array");
     const Json second = Json::parse(parsed.tool_calls[1].arguments_json);
     failures += check(second.at("value") == "plain text", "plain text parameter string");
+    return failures;
+}
+
+int test_string_typed_json_literal_stays_string() {
+    const std::vector<ninfer::serve::ToolDefinition> tools = {{
+        "write", "", R"({"type":"object","properties":{"text":{"type":"string"},"count":{"type":"integer"}}})"}};
+    const auto param_types = ninfer::serve::build_tool_param_type_map(tools);
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(
+        "<tool_call><function=write><parameter=text>true</parameter>"
+        "<parameter=count>7</parameter></function></tool_call>",
+        64, param_types);
+    const Json args = Json::parse(parsed.tool_calls.at(0).arguments_json);
+    int failures = 0;
+    failures += check(args.at("text").is_string() && args.at("text") == "true",
+                      "string-typed JSON literal was eagerly deserialized");
+    failures += check(args.at("count").is_number_integer() && args.at("count") == 7,
+                      "integer-typed parameter was not deserialized");
     return failures;
 }
 
@@ -157,6 +181,7 @@ int main() {
     int failures = 0;
     failures += test_single_call();
     failures += test_multiple_calls_and_json_values();
+    failures += test_string_typed_json_literal_stays_string();
     failures += test_malformed_falls_back_to_text();
     failures += test_suffix_after_tool_falls_back_to_text();
     failures += test_configured_name_limit();

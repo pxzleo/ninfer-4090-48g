@@ -21,6 +21,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS {
@@ -109,6 +111,33 @@ struct TurnCheckpoint {
     std::uint32_t frontier = 0;
 };
 
+// Minimum ledger distance between two retained ring checkpoints. Denser entries are folded
+// into their deeper neighbour when the ring is compacted (llama.cpp uses 8192 for the same
+// policy; pi turns are shorter, so half that keeps recent turns individually restorable).
+inline constexpr std::uint32_t kTurnCheckpointMinStep = 4096;
+
+// One host-retained turn checkpoint: the full linear-attention state image (per-layer conv +
+// recurrent) and the boundary hidden vector at `frontier`. The attention KV needs no copy -
+// entries stay valid only while the resident ledger prefix below `frontier` is untouched, so
+// the lane's paged KV still holds those positions. session_digest hashes the ledger prefix.
+struct HostTurnCheckpoint {
+    std::uint32_t frontier = 0;
+    std::string session_digest;
+    std::vector<std::uint8_t> hidden;
+    std::vector<std::uint8_t> conv;
+    std::vector<std::uint8_t> recurrent;
+};
+
+// In-flight device-to-host copy of the newest captured checkpoint. The copy is enqueued on the
+// engine stream right after prefill captures the device checkpoint slot; the next request for
+// the lane drains it into the ring (event-synchronized) or discards it when the divergence
+// point invalidated it.
+struct CheckpointStaging {
+    bool pending           = false;
+    std::uint32_t frontier = 0;
+    std::string session_digest;
+};
+
 struct SequenceKVBundle {
     PagedKVAllocation text;
     std::optional<PagedKVAllocation> backend;
@@ -155,6 +184,9 @@ struct SequenceState {
     bool tail_hidden_valid        = false;
     bool retained                 = false;
     TurnCheckpoint turn_checkpoint;
+    // Host ring of past turn checkpoints, ascending by frontier. Populated only when the
+    // Program was planned with a non-zero turn checkpoint ring.
+    std::vector<HostTurnCheckpoint> checkpoint_ring;
 };
 
 // Request/round control is not retained with a reusable SequenceState. A later concurrent Engine
@@ -219,6 +251,15 @@ public:
     void abort_lane(std::uint32_t lane) noexcept;
     [[nodiscard]] bool has_retained_lane(std::uint32_t lane) const noexcept;
     void evict_retained_lane(std::uint32_t lane) noexcept;
+    [[nodiscard]] std::uint32_t retained_lane_depth(std::uint32_t lane) const noexcept;
+    [[nodiscard]] std::string retained_lane_digest(std::uint32_t lane) const;
+    [[nodiscard]] std::vector<SlotCheckpoint>
+    retained_lane_checkpoints(std::uint32_t lane) const;
+    [[nodiscard]] qwen3_6::RetainedSessionSnapshot
+    save_retained_lane(std::uint32_t lane, std::string_view model_binding);
+    [[nodiscard]] std::uint32_t restore_retained_lane(std::uint32_t lane,
+                                                      std::span<const std::uint8_t> snapshot,
+                                                      std::string_view model_binding);
     [[nodiscard]] GenerationTimings generation_timings_lane(std::uint32_t lane) const noexcept;
     [[nodiscard]] SpeculativeStats speculative_stats_lane(std::uint32_t lane) const noexcept;
 
@@ -247,7 +288,13 @@ public:
     const ProposalHead proposal_head;
     const bool vision_enabled;
     const bool use_cuda_graph;
+    const std::uint32_t checkpoint_ring_capacity;
     const std::size_t kv_payload_bytes;
+    const std::size_t text_kv_bytes;
+    const std::size_t mtp_kv_bytes;
+    const std::size_t gdn_state_bytes;
+    const std::size_t dflash_kv_bytes;
+    const std::size_t replay_records_bytes;
     const std::size_t graph_allowance_bytes;
     std::size_t graph_observed_bytes = 0;
     const WorkspacePlan workspace_plan;
@@ -284,11 +331,29 @@ public:
     qwen3_6::DFlashDecodeIngress* dflash_host_ingress = nullptr;
     qwen3_6::DFlashDecodeEgress* dflash_host_egress   = nullptr;
 
+    // One pinned staging entry per lane (hidden + per-layer conv + per-layer recurrent) for
+    // asynchronous checkpoint capture, plus the per-lane copy-completion events.
+    std::optional<PinnedHostBuffer> checkpoint_staging_store;
+    std::array<CheckpointStaging, kMaximumConcurrency> checkpoint_staging{};
+    std::array<cudaEvent_t, kMaximumConcurrency> checkpoint_staging_events{};
+
     std::size_t workspace_logical_peak_bytes = 0;
 
 private:
     void clear_lane(SequenceState& sequence, RequestControl& request) noexcept;
     void ordered_reset(SequenceState& sequence);
+    [[nodiscard]] std::size_t checkpoint_hidden_bytes() const noexcept;
+    [[nodiscard]] std::size_t checkpoint_conv_bytes() const noexcept;
+    [[nodiscard]] std::size_t checkpoint_recurrent_bytes() const noexcept;
+    [[nodiscard]] std::size_t checkpoint_entry_bytes() const noexcept;
+    [[nodiscard]] std::uint8_t* checkpoint_staging_base(std::uint32_t lane) const noexcept;
+    void stage_turn_checkpoint(SequenceState& sequence);
+    void drain_checkpoint_staging(SequenceState& sequence);
+    void discard_checkpoint_staging(SequenceState& sequence) noexcept;
+    void invalidate_checkpoint_ring(SequenceState& sequence,
+                                    std::uint32_t keep_through) noexcept;
+    [[nodiscard]] bool upload_ring_checkpoint(SequenceState& sequence, std::uint32_t frontier);
+    void append_ring_checkpoint(SequenceState& sequence, HostTurnCheckpoint&& entry);
     void prepare_graphs();
     void install_sampling(SequenceState& sequence, RequestControl& request,
                           const ops::SamplingConfig& config);

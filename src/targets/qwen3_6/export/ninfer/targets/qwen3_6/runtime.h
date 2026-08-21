@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace ninfer {
 struct DeviceContext;
@@ -25,6 +28,15 @@ struct GraphExecutionProfile {
     std::uint32_t min            = 0;
     std::uint32_t max            = 0;
     std::uint32_t topology_class = 0;
+};
+
+// One retained lane's complete session image (host bytes) for save/restore persistence. The
+// byte layout is a target-private format; callers treat it as opaque and durable only across
+// processes serving the identical model and KV configuration.
+struct RetainedSessionSnapshot {
+    std::vector<std::uint8_t> bytes;
+    std::uint32_t tokens = 0;
+    std::string session_digest;
 };
 
 namespace detail {
@@ -171,6 +183,22 @@ public:
     void abort_lane(std::uint32_t lane) noexcept;
     [[nodiscard]] bool has_retained_lane(std::uint32_t lane) const noexcept;
     void evict_retained_lane(std::uint32_t lane) noexcept;
+    [[nodiscard]] std::uint32_t retained_lane_depth(std::uint32_t lane) const noexcept;
+    // Stable identifier (FNV-1a 64 hex) of the lane's resident token ledger; empty unless the
+    // lane holds a retained session.
+    [[nodiscard]] std::string retained_lane_digest(std::uint32_t lane) const;
+    // Retained turn checkpoints of the lane's resident session, oldest first: the frontiers a
+    // diverging prompt can restore from, each with the digest of the ledger prefix it covers.
+    [[nodiscard]] std::vector<SlotCheckpoint>
+    retained_lane_checkpoints(std::uint32_t lane) const;
+    // Session persistence for one idle retained lane. `model_binding` pins the snapshot to the
+    // serving weights identity; restore rejects a mismatched binding or configuration. Both
+    // synchronize the device before returning and require the lane to hold no active request.
+    [[nodiscard]] RetainedSessionSnapshot save_retained_lane(std::uint32_t lane,
+                                                             std::string_view model_binding);
+    [[nodiscard]] std::uint32_t restore_retained_lane(std::uint32_t lane,
+                                                      std::span<const std::uint8_t> snapshot,
+                                                      std::string_view model_binding);
     [[nodiscard]] GenerationTimings generation_timings_lane(std::uint32_t lane) const noexcept;
     [[nodiscard]] SpeculativeStats speculative_stats_lane(std::uint32_t lane) const noexcept;
 

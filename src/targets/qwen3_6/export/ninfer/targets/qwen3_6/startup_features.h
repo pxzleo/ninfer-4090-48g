@@ -6,6 +6,8 @@ namespace ninfer::targets::qwen3_6 {
 
 struct StartupFeatures {
     bool vision                    = false;
+    std::uint32_t vision_max_tokens = 8192;
+    std::uint32_t image_token_budget = 0;
     SpeculativeBackend speculative = SpeculativeBackend::None;
     ProposalHead proposal_head     = ProposalHead::Full;
 
@@ -26,9 +28,11 @@ struct StartupFeatures {
 
 [[nodiscard]] inline StartupFeatures startup_features(const EngineOptions& options) noexcept {
     return StartupFeatures{
-        .vision        = options.enable_vision,
-        .speculative   = options.speculative.backend,
-        .proposal_head = options.speculative.proposal_head,
+        .vision            = options.enable_vision,
+        .vision_max_tokens = options.vision_max_tokens > 0 ? options.vision_max_tokens : 8192,
+        .image_token_budget = options.image_token_budget,
+        .speculative       = options.speculative.backend,
+        .proposal_head     = options.speculative.proposal_head,
     };
 }
 

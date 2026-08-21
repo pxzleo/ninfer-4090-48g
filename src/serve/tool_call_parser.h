@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ninfer::serve {
@@ -15,8 +17,14 @@ struct ParsedToolCallOutput {
     std::vector<ToolCall> tool_calls;
 };
 
+using ToolParamTypeMap =
+    std::unordered_map<std::string, std::unordered_set<std::string>>;
+
+ToolParamTypeMap build_tool_param_type_map(const std::vector<ToolDefinition>& tools);
+
 ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
-                                                 std::size_t max_tool_name_length);
+                                                 std::size_t max_tool_name_length,
+                                                 const ToolParamTypeMap& param_types = {});
 
 // Incrementally publishes text that is provably outside a possible Qwen
 // <tool_call> suffix. At terminal time, a valid tool response discards the

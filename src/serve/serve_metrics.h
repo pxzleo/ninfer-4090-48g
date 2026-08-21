@@ -5,9 +5,11 @@
 //
 // The four llamacpp:-prefixed counters reproduce llama.cpp's --metrics
 // semantics - computed prefill tokens (prefix-cache hits excluded) billed
-// against prefill wall time, committed decode tokens against decode wall
+// against prefill unit time, committed decode tokens against decode unit
 // time - so scrapers that difference llama.cpp counters read this server
-// without changes. The ninfer:-prefixed series report what llama.cpp cannot:
+// without changes. They are sourced from the Engine's live per-unit totals,
+// so they advance during a request like llama.cpp's do, not only at its
+// completion. The ninfer:-prefixed series report what llama.cpp cannot:
 // speculative draft/acceptance totals, prefix-cache reuse, and the current
 // page-aligned Main KV occupancy/capacity.
 
@@ -50,16 +52,15 @@ public:
     // One complete Prometheus text body, without HTTP framing. In-flight
     // requests are split into processing/deferred against `max_concurrency`,
     // matching the FIFO scheduler's work-conserving behavior.
+    // `live` supplies the four llamacpp token/seconds counters from the Engine's per-unit
+    // totals, so scrapers see rates advance during a request; the completion-based sums this
+    // class accumulates back the ninfer: series and the idle slot display.
     [[nodiscard]] std::string render(std::uint32_t max_concurrency,
-                                     const RuntimeStats& runtime) const;
+                                     const ninfer::RuntimeStats& live) const;
 
 private:
     mutable std::mutex mutex_;
     std::uint64_t requests_total_                    = 0;
-    std::uint64_t prompt_tokens_total_               = 0;
-    double prompt_seconds_total_                     = 0.0;
-    std::uint64_t tokens_predicted_total_            = 0;
-    double tokens_predicted_seconds_total_           = 0.0;
     std::uint64_t prefix_cache_hit_tokens_total_     = 0;
     std::uint64_t speculative_draft_tokens_total_    = 0;
     std::uint64_t speculative_accepted_tokens_total_ = 0;

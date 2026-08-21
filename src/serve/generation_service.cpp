@@ -258,8 +258,25 @@ GenerationService::GenerationService(ServeOptions options, LoadProgress load_pro
     engine_options.max_pending_requests = options_.max_pending_requests;
     engine_options.pending_timeout_ms   = options_.pending_timeout_ms;
     engine_options.prefill_chunk        = options_.prefill_chunk;
+    engine_options.turn_checkpoint_ring = options_.turn_checkpoint_ring;
+    engine_options.auto_save_evicted    = options_.auto_save_evicted;
+    if (options_.auto_save_evicted) {
+        engine_options.auto_save_listener = [](const ninfer::SlotAutoSaveEvent& event) {
+            if (event.error.empty()) {
+                write_console_log(ConsoleLogLevel::Info,
+                                  "slot auto-save file=" + event.path +
+                                      " n_saved=" + std::to_string(event.tokens) +
+                                      " bytes=" + std::to_string(event.bytes));
+            } else {
+                write_console_log(ConsoleLogLevel::Warning,
+                                  "slot auto-save FAILED file=" + event.path + ": " + event.error);
+            }
+        };
+    }
     engine_options.kv_cache             = options_.kv_cache;
     engine_options.enable_vision        = options_.enable_vision;
+    engine_options.vision_max_tokens    = options_.vision_max_tokens;
+    engine_options.image_token_budget   = options_.image_token_budget;
     engine_options.use_cuda_graph       = options_.use_cuda_graph;
     engine_options.speculative          = options_.speculative;
     engine_options.load_progress        = std::move(load_progress);
@@ -340,6 +357,7 @@ PreparedRequest GenerationService::prepare(const GenerationRequest& request,
     prepared.include_usage                 = request.include_usage;
     prepared.tool_capable                  = request.uses_tools() || request.has_tool_history();
     prepared.tool_name_max_length          = request.tool_name_max_length;
+    prepared.param_types                   = build_tool_param_type_map(request.tools);
     const ResolvedPromptSemantics semantics =
         resolve_prompt_semantics(request, options_, prompt_capabilities_);
     prepared.enable_thinking                   = semantics.enable_thinking;
@@ -442,6 +460,8 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.completion_tokens = static_cast<int>(result.generated_token_ids.size());
     outcome.reasoning_tokens  = static_cast<int>(result.reasoning_tokens);
     outcome.finish_reason     = result.finish_reason;
+    outcome.id_slot           = result.slot;
+    outcome.session_digest    = std::move(result.session_digest);
 
     outcome.metrics.prepare_seconds = prepared.prepare_seconds;
     outcome.metrics.ttft_seconds =
@@ -466,8 +486,8 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
 
     bool is_tool_call_response = false;
     if (prepared.tool_capable) {
-        ParsedToolCallOutput parsed =
-            parse_qwen_tool_call_output(outcome.text, prepared.tool_name_max_length);
+        ParsedToolCallOutput parsed = parse_qwen_tool_call_output(
+            outcome.text, prepared.tool_name_max_length, prepared.param_types);
         outcome.text          = std::move(parsed.content);
         is_tool_call_response = parsed.is_tool_call_response;
         if (is_tool_call_response) { outcome.tool_calls = std::move(parsed.tool_calls); }

@@ -201,7 +201,20 @@ void print_generation_summary(const ninfer::GenerationResult& result,
     print_metric("gpu weights used", format_arena_used(memory.weights));
     print_metric("gpu sequence used", format_arena_used(memory.sequence));
     print_metric("kv cache dtype", format_kv_cache(memory.kv_cache));
-    print_metric("kv cache payload", format_bytes(memory.kv_payload_bytes));
+    print_metric("kv cache payload (total)", format_bytes(memory.kv_payload_bytes));
+    print_metric("  text kv payload", format_bytes(memory.text_kv_bytes));
+    if (memory.mtp_kv_bytes > 0) {
+        print_metric("  mtp kv payload", format_bytes(memory.mtp_kv_bytes));
+    }
+    if (memory.dflash_kv_bytes > 0) {
+        print_metric("  dflash kv payload", format_bytes(memory.dflash_kv_bytes));
+    }
+    if (memory.gdn_state_bytes > 0) {
+        print_metric("  gdn state payload", format_bytes(memory.gdn_state_bytes));
+    }
+    if (memory.replay_records_bytes > 0) {
+        print_metric("  replay records payload", format_bytes(memory.replay_records_bytes));
+    }
     print_metric("gpu workspace peak", format_arena_peak(memory.workspace));
     print_metric("runtime reservation", format_bytes(memory.runtime_reservation_bytes));
     print_metric("free after weights", format_bytes(memory.available_after_weights_bytes));
@@ -277,8 +290,9 @@ int main(int argc, char** argv) {
         engine_options.prefill_chunk  = cli.prefill_chunk;
         engine_options.kv_cache       = cli.kv_cache;
         engine_options.speculative    = cli.speculative;
-        engine_options.enable_vision  = cli.enable_vision;
-        engine_options.use_cuda_graph = cli.use_cuda_graph;
+        engine_options.enable_vision      = cli.enable_vision;
+        engine_options.vision_max_tokens  = cli.vision_max_tokens;
+        engine_options.use_cuda_graph     = cli.use_cuda_graph;
         engine_options.load_progress  = load_progress.callback();
 
         const auto load_started = Clock::now();

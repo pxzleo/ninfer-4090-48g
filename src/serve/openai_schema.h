@@ -23,11 +23,14 @@ namespace ninfer::serve {
 GenerationRequest parse_chat_completion_request(const nlohmann::json& body,
                                                 const RequestLimits& limits);
 
+std::optional<bool> parse_openai_template_enable_thinking(const nlohmann::json& body);
 std::optional<bool> parse_openai_preserve_thinking(const nlohmann::json& body);
 
 // Non-streaming chat completion response body (JSON string). When `reasoning` is
 // non-empty it is attached as `message.reasoning_content` (the DeepSeek/vLLM-style
 // convention consumed by Chatbox, Open WebUI, etc.), leaving `content` = answer.
+// When `usage.has_timings` is set, a llama.cpp-compatible top-level `timings`
+// block is included so proxies (llama-swap) can derive Prefill/Decode rates.
 std::string make_chat_completion_response(const std::string& id, const std::string& model,
                                           std::int64_t created, const std::string& content,
                                           const std::string& reasoning, const char* finish_reason,
@@ -56,9 +59,12 @@ std::string make_chat_chunk_content(const std::string& id, const std::string& mo
 std::string make_chat_chunk_tool_calls(const std::string& id, const std::string& model,
                                        std::int64_t created,
                                        const std::vector<ToolCall>& tool_calls, bool include_usage);
+// Final chunk: `delta: {}` with finish_reason. When `usage.has_timings` is set a
+// top-level `timings` block is included (matching llama.cpp's stream convention)
+// so proxies can derive per-request rates from the final chunk alone.
 std::string make_chat_chunk_final(const std::string& id, const std::string& model,
                                   std::int64_t created, const char* finish_reason,
-                                  bool include_usage);
+                                  bool include_usage, const CompletionUsage& usage = {});
 // Dedicated usage chunk: `choices: []` with the request's token usage. Emitted
 // only when stream_options.include_usage is true.
 std::string make_chat_chunk_usage(const std::string& id, const std::string& model,

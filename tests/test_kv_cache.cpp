@@ -123,6 +123,108 @@ int expect_zeroed_pages(ninfer::PagedKVPool& pool, ninfer::PagedKVPlaneOrder ord
     return 1;
 }
 
+// Fills every plane with a deterministic per-byte pattern so page payloads are recognizable
+// after they move through a host image into differently-numbered physical pages.
+int fill_planes(ninfer::PagedKVPool& pool, const char* label) {
+    for (std::size_t index = 0; index < pool.plane_count(); ++index) {
+        const ninfer::Tensor& plane = pool.plane(index);
+        std::vector<unsigned char> pattern(plane.bytes());
+        for (std::size_t byte = 0; byte < pattern.size(); ++byte) {
+            pattern[byte] = static_cast<unsigned char>((index * 131 + byte * 7) & 0xFF);
+        }
+        const cudaError_t err =
+            cudaMemcpy(plane.data, pattern.data(), pattern.size(), cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            std::cerr << label << " fill failed: " << cudaGetErrorString(err) << '\n';
+            return 1;
+        }
+    }
+    return 0;
+}
+
+std::vector<unsigned char> read_page_from_plane(const ninfer::Tensor& plane,
+                                                ninfer::PagedKVPlaneOrder order,
+                                                std::int32_t page) {
+    std::vector<unsigned char> host_plane(plane.bytes());
+    if (cudaMemcpy(host_plane.data(), plane.data, host_plane.size(), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+        return {};
+    }
+    std::vector<unsigned char> bytes;
+    if (order == ninfer::PagedKVPlaneOrder::PageMajor) {
+        const std::size_t begin = static_cast<std::size_t>(page) * plane.nb[3];
+        bytes.assign(host_plane.begin() + static_cast<std::ptrdiff_t>(begin),
+                     host_plane.begin() + static_cast<std::ptrdiff_t>(begin + plane.nb[3]));
+    } else {
+        for (std::int32_t head = 0; head < plane.ne[3]; ++head) {
+            const std::size_t begin =
+                static_cast<std::size_t>(head) * plane.nb[3] + static_cast<std::size_t>(page) * plane.nb[2];
+            bytes.insert(bytes.end(), host_plane.begin() + static_cast<std::ptrdiff_t>(begin),
+                         host_plane.begin() + static_cast<std::ptrdiff_t>(begin + plane.nb[2]));
+        }
+    }
+    return bytes;
+}
+
+int test_host_page_copies(ninfer::DeviceContext& ctx, ninfer::PagedKVPlaneOrder order,
+                          const char* label) {
+    int failures = 0;
+    std::vector<ninfer::PagedKVPlaneSpec> planes;
+    if (order == ninfer::PagedKVPlaneOrder::PageMajor) {
+        planes = {{ninfer::DType::I8, 64, 2}, {ninfer::DType::FP16, 1, 2}};
+    } else {
+        planes = {{ninfer::DType::BF16, 128, 4}};
+    }
+    auto source_plan = plan_paged_cache(8, 8, 1, planes, order);
+    auto dest_plan   = plan_paged_cache(8, 8, 1, planes, order);
+    ninfer::DeviceArena source_arena(source_plan.bytes);
+    ninfer::DeviceArena dest_arena(dest_plan.bytes);
+    ninfer::PagedKVPool source({source_arena.base(), source_arena.capacity()}, source_plan.layout);
+    ninfer::PagedKVPool dest({dest_arena.base(), dest_arena.capacity()}, dest_plan.layout);
+
+    std::size_t expected_page_bytes = 0;
+    for (std::size_t index = 0; index < source.plane_count(); ++index) {
+        const ninfer::Tensor& plane = source.plane(index);
+        expected_page_bytes += order == ninfer::PagedKVPlaneOrder::PageMajor
+                                   ? static_cast<std::size_t>(plane.nb[3])
+                                   : static_cast<std::size_t>(plane.nb[2]) *
+                                         static_cast<std::size_t>(plane.ne[3]);
+    }
+    failures += expect_size(source.page_payload_bytes(), expected_page_bytes,
+                            "host-copy page payload bytes");
+
+    failures += fill_planes(source, label);
+    const ninfer::Tensor& dest_plane = dest.plane(0);
+    if (cudaMemset(dest_plane.data, 0xEE, dest_plane.bytes()) != cudaSuccess) { return ++failures; }
+    // The fills above ride the legacy default stream; ctx.stream is non-blocking, so order the
+    // pool copies behind them explicitly.
+    if (cudaDeviceSynchronize() != cudaSuccess) { return ++failures; }
+
+    // Out-of-order ids with one consecutive run inside exercise the run batching without
+    // assuming either side's physical numbering.
+    const std::int32_t source_pages[] = {5, 2, 3, 7};
+    const std::int32_t dest_pages[]   = {0, 6, 1, 4};
+    std::vector<unsigned char> image(4 * source.page_payload_bytes());
+    source.copy_pages_to_host(source_pages, image.data(), ctx.stream);
+    dest.copy_pages_from_host(dest_pages, image.data(), ctx.stream);
+    if (cudaStreamSynchronize(ctx.stream) != cudaSuccess) { return ++failures; }
+
+    for (std::size_t position = 0; position < 4; ++position) {
+        for (std::size_t plane_index = 0; plane_index < source.plane_count(); ++plane_index) {
+            const auto from = read_page_from_plane(source.plane(plane_index), order,
+                                                   source_pages[position]);
+            const auto to =
+                read_page_from_plane(dest.plane(plane_index), order, dest_pages[position]);
+            if (from.empty() || from != to) {
+                ++failures;
+                std::cerr << label << " page payload diverged at position " << position
+                          << " plane " << plane_index << '\n';
+            }
+        }
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -167,6 +269,10 @@ int main() {
     const std::int32_t selected_pages[] = {1, 2, 6};
     failures += expect_zeroed_pages(paged_pool, ninfer::PagedKVPlaneOrder::PageMajor,
                                     selected_pages, ctx.stream, "page-major selective zero");
+    failures += test_host_page_copies(ctx, ninfer::PagedKVPlaneOrder::PageMajor,
+                                      "page-major host copies");
+    failures += test_host_page_copies(ctx, ninfer::PagedKVPlaneOrder::HeadMajor,
+                                      "head-major host copies");
 
     auto head_major_plan = plan_paged_cache(10, 10, 1, {{ninfer::DType::BF16, 128, 8}},
                                             ninfer::PagedKVPlaneOrder::HeadMajor);

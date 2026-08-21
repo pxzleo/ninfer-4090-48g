@@ -130,6 +130,18 @@ public:
     // Zeros only the named physical page groups across every storage plane.
     void zero_pages(std::span<const std::int32_t> page_ids, cudaStream_t stream = nullptr);
 
+    // Bytes one physical page group occupies across every storage plane.
+    [[nodiscard]] std::size_t page_payload_bytes() const noexcept;
+
+    // Copies the named physical page groups between device planes and one host buffer of
+    // page_ids.size() * page_payload_bytes() bytes. The host layout is plane-major and keeps
+    // the caller's page order within each plane, so a round trip is independent of the
+    // physical ids either side happens to hold. Enqueues on `stream` without synchronizing.
+    void copy_pages_to_host(std::span<const std::int32_t> page_ids, void* host,
+                            cudaStream_t stream = nullptr) const;
+    void copy_pages_from_host(std::span<const std::int32_t> page_ids, const void* host,
+                              cudaStream_t stream = nullptr);
+
 private:
     friend class PagedKVAllocation;
     friend void resize_paged_kv_bundle(std::span<const PagedKVResize> changes);

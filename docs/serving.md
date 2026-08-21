@@ -53,6 +53,52 @@ cannot be combined with `--vision`. A later request cannot enable a capability o
 | `GET /v1/responses/{id}/input_items` | list that Response's normalized input Items |
 | `POST /v1/messages` | Anthropic-style message generation |
 | `POST /v1/messages/count_tokens` | checkpoint-native expanded input-token count |
+| `GET /slots` | per-slot occupancy from the Engine lane table: processing/retained, depths, `session_digest` |
+| `POST /slots/{id}?action=save\|restore\|erase` | session persistence; requires `--slot-save-path` |
+
+### Session persistence
+
+`--slot-save-path DIR` enables llama.cpp-compatible slot persistence. `save` writes slot
+`{id}`'s complete resident session - paged Text and MTP KV in logical page order, GDN
+linear-attention state, the MTP tail hidden, the turn checkpoint, and the resident prefix
+identity - to `DIR/filename` from a `{"filename": NAME}` body; `restore` rebuilds the slot
+from such a file (evicting whatever it retained); `erase` evicts the slot and reports its
+depth. Names are one conservative path component: 1-128 bytes of `[A-Za-z0-9._-]` with no
+leading dot.
+
+A restored slot is indistinguishable from one the engine retained itself: a request that
+extends the saved conversation reuses the cache (`AppendAtFrontier`, or the saved turn
+checkpoint on a rewritten last turn) instead of re-prefilling, across server restarts. The
+device round trip runs at a request boundary while file I/O stays outside the GPU lock; a
+slot with an active request answers 409.
+
+Sessions are identified by a `session_digest` (a stable hash of the resident token ledger;
+treat it as opaque). Successful chat completions report `id_slot` and, when the lane retained
+the finished session, its `session_digest` top-level next to `timings` (final stream chunk
+included); `GET /slots` reports each idle retained lane's digest; save and restore responses
+echo the digest of the session they moved. `save` and `erase` accept an optional
+`{"if_digest": DIGEST}` precondition, checked atomically with the operation, so a client
+always persists or evicts exactly the session it means - a mismatch (including a since-evicted
+session) answers 409 `slot_session_mismatch`. Snapshots bind to the exact weights identity, KV
+dtype/geometry, and speculative configuration, and restore refuses anything mismatched.
+Sizing: roughly the configured KV bytes per token times session depth, plus a fixed GDN
+state block (about 300 MiB with a held turn checkpoint on Qwen3.8-27B); a 6.9k-token
+session measures 416 MiB, saving in ~0.24 s and restoring in ~0.12 s on NVMe. The DFlash
+backend is not supported.
+
+When `--turn-checkpoints` is active, a snapshot also carries the slot's checkpoint ring at
+about 147 MiB per entry (format version 2; a snapshot with an empty ring stays version 1,
+which binaries without ring support keep reading). The restored ring lets a later
+mid-history edit reuse the session; see
+[turn-checkpoint-ring.md](turn-checkpoint-ring.md).
+
+A successful save or restore binds the slot to its file. With `--auto-save-evicted`, an
+involuntary eviction (a fresh session claiming the slot, a restore over it, or a
+KV-pressure eviction) first spills the resident session back to that file, so the client's
+next restore recovers the session at its latest frontier instead of the last explicit
+save. Sessions never saved or restored have no binding and are not spilled; an explicit
+`erase` is a deletion request and never auto-saves. The console reports each spill as
+`slot auto-save file=... n_saved=...`.
 
 ## OpenAI Chat Completions
 
@@ -80,7 +126,7 @@ The endpoint supports:
 - `stream_options.include_usage`;
 - function tools, tool choices, assistant tool-call history, and tool-result messages;
 - the top-level `reasoning_effort` field;
-- the `enable_thinking` extension;
+- the top-level `enable_thinking` extension and `chat_template_kwargs.enable_thinking`;
 - `chat_template_kwargs.preserve_thinking` and the top-level `preserve_thinking` alias.
 
 The request `model` must equal the public model ID: the artifact `identity.model_id` by default, or
@@ -97,17 +143,23 @@ not exposed by the loaded template returns HTTP 400 with code
 For Chat Completions, `reasoning_effort: "none"` disables thinking. `low`, `medium`, and `xhigh`
 select the corresponding template effort when available. The other OpenAI protocol values
 `minimal`, `high`, and `max` are parsed but rejected when the loaded template does not expose them.
-`enable_thinking` controls the same new-turn thinking switch; a contradictory combination with
-`reasoning_effort` returns `conflicting_template_option`.
+`enable_thinking` and `chat_template_kwargs.enable_thinking` control the same new-turn thinking
+switch; contradictory aliases, or a contradictory combination with `reasoning_effort`, return
+`conflicting_template_option`.
 
 `preserve_thinking` controls whether reasoning from closed assistant turns remains in later
 prompts. It defaults to the server setting, which is off unless `--preserve-thinking` is used. If
 both OpenAI spellings are present they must carry the same boolean value. Unknown non-null
-`chat_template_kwargs` are rejected.
+`chat_template_kwargs` keys are rejected.
 
 Streaming begins with an assistant-role chunk, sends separate reasoning and content deltas, then a
 finish-reason chunk and `[DONE]`. When `stream_options.include_usage` is true, a final empty
 `choices` chunk contains completed usage.
+
+Completed Chat Completions usage includes
+`prompt_tokens_details.cached_tokens`. The value is the compatible resident-prefix token count,
+clamped to the reported prompt-token count, and is emitted consistently for ordinary, tool-call,
+and final streaming usage objects.
 
 ### Multimodal request
 
@@ -428,6 +480,9 @@ curl http://127.0.0.1:8080/v1/models \
 | `--device N` | CUDA device index | `0` |
 | `--max-request-mib N` | body-size limit before JSON parsing | `384` |
 | `--request-log-jsonl FILE` | append full-precision server/request records | disabled |
+| `--slot-save-path DIR` | enable `/slots/{id}?action=save\|restore\|erase` session persistence into DIR | disabled |
+| `--turn-checkpoints N` | retained turn checkpoints per slot for mid-history prompt reuse; see [turn-checkpoint-ring.md](turn-checkpoint-ring.md) | `0` |
+| `--auto-save-evicted` | spill an involuntarily evicted session back to its bound slot file; requires `--slot-save-path` | off |
 | `--response-store-max-records N` | maximum locally retained Responses objects | `1024` |
 | `--response-store-max-mib N` | total local Response envelope/Item/context budget | `256` |
 | `--kv-dtype bf16\|int8\|rk8v4\|rk4v4\|rk4v4-e8\|rk2v4-e8` | KV-cache storage; rotated and E8-lattice modes trade key/value precision for capacity | `bf16` |

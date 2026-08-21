@@ -24,3 +24,4 @@
 #include "targets/qwen3_6/impl/runtime/mtp_impl.h"
 #include "targets/qwen3_6/impl/runtime/request_plan_impl.h"
 #include "targets/qwen3_6/impl/runtime/program_impl.h"
+#include "targets/qwen3_6/impl/runtime/session_snapshot_impl.h"

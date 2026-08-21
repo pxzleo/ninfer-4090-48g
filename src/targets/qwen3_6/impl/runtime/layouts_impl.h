@@ -529,9 +529,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
     }
 
     if (plan.features.vision) {
-        constexpr std::uint32_t kFrontendMergedLimit  = 32768;
+        const std::uint32_t frontend_limit =
+            plan.features.vision_max_tokens > 0 ? plan.features.vision_max_tokens : 8192;
         constexpr std::uint32_t kFrontendSegmentLimit = 768 / 2;
-        const std::uint32_t merged = std::min(plan.capacity, kFrontendMergedLimit);
+        const std::uint32_t merged = std::min(plan.capacity, frontend_limit);
         out.vision_encode          = schedule::VisionContext::workspace_capacity_bytes(
             merged, std::min(merged, kFrontendSegmentLimit));
     }
@@ -622,6 +623,10 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
     impl->max_concurrency     = inputs.max_concurrency;
     impl->prefill_chunk       = inputs.prefill_chunk;
     impl->draft_window        = inputs.draft_window;
+    // DFlash keeps checkpoint state in its own cyclic mirror that only covers the resident
+    // checkpoint; older ring entries could not rebuild it, so the ring stays off there.
+    impl->turn_checkpoint_ring =
+        inputs.speculative_backend == SpeculativeBackend::DFlash ? 0 : inputs.turn_checkpoint_ring;
     impl->speculative_backend = inputs.speculative_backend;
     impl->proposal_head       = inputs.proposal_head;
     impl->features            = inputs.features;
@@ -638,8 +643,9 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
     impl->persistent          = persistent_layout(*impl);
     impl->workspace           = build_workspace_plan(*impl);
     if (impl->features.vision) {
-        constexpr std::uint32_t kFrontendMergedLimit = 32768;
-        const std::uint32_t merged = std::min(impl->capacity, kFrontendMergedLimit);
+        const std::uint32_t frontend_limit =
+            impl->features.vision_max_tokens > 0 ? impl->features.vision_max_tokens : 8192;
+        const std::uint32_t merged = std::min(impl->capacity, frontend_limit);
         impl->request_transient_capacity_bytes =
             schedule::VisionContext::output_transient_bytes(merged);
     }
@@ -695,6 +701,19 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
         }
     }
 
+    if (impl->use_cuda_graph) {
+        // Graph preparation has a fixed allocation cost in addition to the per-lane planner
+        // estimates. Keep low-allowance ordinary and small-MTP configurations above that floor.
+        const std::size_t allowance_floor =
+            checked_add(40ULL * kMiB,
+                        checked_mul(8ULL * kMiB, impl->max_concurrency,
+                                    "graph allowance per lane"),
+                        "graph allowance floor");
+        if (impl->graph_allowance_bytes < allowance_floor) {
+            impl->graph_allowance_bytes = allowance_floor;
+        }
+    }
+
     impl->device_reservation_bytes = checked_add(
         checked_add(
             checked_add(impl->persistent.bytes, impl->workspace.capacity, "sequence memory plan"),
@@ -716,6 +735,7 @@ make_sequence_planner_impl(DeviceContext& device, const EngineOptions& options,
         .max_concurrency     = options.max_concurrency,
         .prefill_chunk       = std::min(options.prefill_chunk, options.max_context),
         .draft_window        = options.speculative.draft_tokens,
+        .turn_checkpoint_ring = options.turn_checkpoint_ring,
         .speculative_backend = options.speculative.backend,
         .kv_dtype       = options.kv_cache == KvCacheStorage::BFloat16 ? DType::BF16 : DType::I8,
         .kv_quant_group = options.kv_cache == KvCacheStorage::BFloat16 ? 0 : qwen3_6::kKvQuantGroup,

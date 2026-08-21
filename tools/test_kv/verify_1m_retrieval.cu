@@ -4,6 +4,7 @@
 #include <chrono>
 #include <random>
 #include <cassert>
+#include <cstdlib>
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
@@ -84,13 +85,29 @@ int main(int argc, char** argv) {
     float* d_scores_fp32 = nullptr;
     float* d_query = nullptr;
 
-    cudaMalloc(&d_keys, raw_keys_bytes);
-    cudaMalloc(&d_tiles_2bit, tiles_2bit_bytes);
-    cudaMalloc(&d_tiles_4bit, tiles_4bit_bytes);
-    cudaMalloc(&d_scores_2bit, scores_bytes);
-    cudaMalloc(&d_scores_4bit, scores_bytes);
-    cudaMalloc(&d_scores_fp32, scores_bytes);
-    cudaMalloc(&d_query, ninfer::test_kv::kHeadDim * sizeof(float));
+    // Roughly 1.2 GiB at the default extent. A busy card is a skip, not a failure:
+    // without this check the first kernel dereferences a null device pointer and the
+    // process dies with SIGSEGV instead of reporting the shortage.
+    const bool allocated =
+        cudaMalloc(&d_keys, raw_keys_bytes) == cudaSuccess &&
+        cudaMalloc(&d_tiles_2bit, tiles_2bit_bytes) == cudaSuccess &&
+        cudaMalloc(&d_tiles_4bit, tiles_4bit_bytes) == cudaSuccess &&
+        cudaMalloc(&d_scores_2bit, scores_bytes) == cudaSuccess &&
+        cudaMalloc(&d_scores_4bit, scores_bytes) == cudaSuccess &&
+        cudaMalloc(&d_scores_fp32, scores_bytes) == cudaSuccess &&
+        cudaMalloc(&d_query, ninfer::test_kv::kHeadDim * sizeof(float)) == cudaSuccess;
+    if (!allocated) {
+        std::cout << "SKIP: device memory unavailable for " << num_tokens << " tokens ("
+                  << cudaGetErrorString(cudaGetLastError()) << ")\n";
+        cudaFree(d_keys);
+        cudaFree(d_tiles_2bit);
+        cudaFree(d_tiles_4bit);
+        cudaFree(d_scores_2bit);
+        cudaFree(d_scores_4bit);
+        cudaFree(d_scores_fp32);
+        cudaFree(d_query);
+        return 77;
+    }
 
     // Generate realistic Gaussian/Transformer keys & query on host
     std::cout << "[2/5] Synthesizing " << num_tokens << " realistic transformer KV activations...\n";
@@ -240,6 +257,15 @@ int main(int argc, char** argv) {
     std::cout << "   [SUMMARY] Microbenchmark Completed with 100% Mathematical Rigor.\n";
     std::cout << "=================================================================\n";
 
+    // Pass/fail summary for CI/CTest: the run only succeeds if every embedded needle is
+    // recovered by the E8 codec at its exact token index. Any missed needle (or a
+    // threshold breach) must fail the process so a CI/CTest run can detect a regression
+    // instead of always exiting 0.
+    const bool all_passed = (needles_found == static_cast<int>(needle_indices.size()));
+    std::cout << "\n  Needle Retrieval: " << needles_found << " / " << needle_indices.size()
+              << " found -> " << (all_passed ? "[PASS]" : "[FAIL]") << "\n";
+    std::cout << "  Verifier exit status: " << (all_passed ? "SUCCESS" : "FAILURE") << "\n";
+
     cudaFree(d_keys);
     cudaFree(d_tiles_2bit);
     cudaFree(d_tiles_4bit);
@@ -247,5 +273,5 @@ int main(int argc, char** argv) {
     cudaFree(d_scores_4bit);
     cudaFree(d_scores_fp32);
     cudaFree(d_query);
-    return 0;
+    return all_passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

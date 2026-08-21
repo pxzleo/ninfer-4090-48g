@@ -49,6 +49,23 @@ struct RequestLimits {
 struct CompletionUsage {
     int prompt_tokens     = 0;
     int completion_tokens = 0;
+
+    // llama.cpp-compatible `timings` block data, emitted so proxies like
+    // llama-swap can derive per-request Prefill/Decode rates and draft stats.
+    // has_timings gates emission; seconds values are wall-clock phase times.
+    bool has_timings          = false;
+    double prefill_seconds    = 0.0;
+    double decode_seconds     = 0.0;
+    double ttft_seconds       = 0.0;
+    std::int64_t cache_hit_tokens  = 0;
+    std::uint64_t draft_tokens     = 0;
+    std::uint64_t accepted_tokens  = 0;
+
+    // Slot identity extras emitted next to `timings`: the lane that served the request
+    // (id_slot >= 0) and its retained session's digest, the handle for /slots save
+    // preconditions. Both are omitted from payloads when absent.
+    int id_slot = -1;
+    std::string session_digest;
 };
 
 enum class ContentKind {

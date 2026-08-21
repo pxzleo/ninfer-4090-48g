@@ -2,6 +2,7 @@
 #include "serve/translate.h"
 
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,11 +38,34 @@ int main() {
     failures += check(!defaults.enable_vision, "Vision is not disabled by default");
     failures += check(defaults.request_log_jsonl.empty(),
                       "request JSONL logging is not disabled by default");
+    failures += check(defaults.slot_save_path.empty(),
+                      "slot persistence is not disabled by default");
+    failures += check(defaults.turn_checkpoint_ring == 0,
+                      "turn checkpoint ring is not disabled by default");
+
+    const ServeOptions ring =
+        parse({"ninfer-serve", "model.ninfer", "--turn-checkpoints", "8"});
+    failures += check(ring.turn_checkpoint_ring == 8, "--turn-checkpoints was not applied");
+    failures += check(!ring.auto_save_evicted, "auto-save-evicted is not disabled by default");
+
+    const ServeOptions auto_save = parse({"ninfer-serve", "model.ninfer", "--slot-save-path",
+                                          "/tmp/slots", "--auto-save-evicted"});
+    failures += check(auto_save.auto_save_evicted, "--auto-save-evicted was not applied");
+    bool auto_save_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--auto-save-evicted"});
+    } catch (const std::invalid_argument&) {
+        auto_save_rejected = true;
+    }
+    failures += check(auto_save_rejected,
+                      "--auto-save-evicted without --slot-save-path was not rejected");
     failures += check(defaults.log_stats_interval_ms == 5000,
                       "periodic throughput interval default mismatch");
     failures += check(defaults.kv_capacity.mode == ninfer::KvCapacityMode::Explicit &&
                           defaults.kv_capacity.explicit_tokens == defaults.max_context,
                       "default KV capacity does not follow max context");
+    failures += check(defaults.image_token_budget == 0,
+                      "an image serving ceiling is unexpectedly applied by default");
     failures += check(defaults.speculative.backend == ninfer::SpeculativeBackend::None,
                       "speculative decoding is not disabled by default");
     failures += check(defaults.response_store_max_records == kDefaultResponseStoreRecords &&
@@ -89,6 +113,11 @@ int main() {
         (void)parse({"ninfer-serve", "model.ninfer", "--model-id", ""});
     } catch (const std::invalid_argument&) { empty_model_id_rejected = true; }
     failures += check(empty_model_id_rejected, "empty --model-id was accepted");
+
+    const ServeOptions image_budget =
+        parse({"ninfer-serve", "model.ninfer", "--image-token-budget", "1280"});
+    failures += check(image_budget.image_token_budget == 1280,
+                      "--image-token-budget did not carry the per-image Vision-token ceiling");
 
     const ServeOptions dflash = parse({"ninfer-serve", "model.ninfer", "--spec", "dflash",
                                        "--draft-tokens", "15", "--lm-head-draft"});
@@ -242,6 +271,14 @@ int main() {
     failures +=
         check(serve_usage_text("ninfer-serve").find("--request-log-jsonl") != std::string::npos,
               "serve help omits --request-log-jsonl");
+
+    const ServeOptions slots =
+        parse({"ninfer-serve", "model.ninfer", "--slot-save-path", "/var/lib/ninfer/slots"});
+    failures += check(slots.slot_save_path == "/var/lib/ninfer/slots",
+                      "--slot-save-path did not preserve its directory");
+    failures +=
+        check(serve_usage_text("ninfer-serve").find("--slot-save-path") != std::string::npos,
+              "serve help omits --slot-save-path");
     bool secret_present    = false;
     bool redaction_present = false;
     for (const std::string& argument : logged.startup_argv) {

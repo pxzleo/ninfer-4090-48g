@@ -145,6 +145,22 @@ int test_preserve_thinking_options() {
         check(parse_chat_completion_request(same, default_limits()).preserve_thinking == true,
               "matching preserve_thinking values rejected");
 
+    Json enable                     = base;
+    enable["chat_template_kwargs"] = Json{{"enable_thinking", false}};
+    failures += check(parse_chat_completion_request(enable, default_limits()).enable_thinking ==
+                          false,
+                      "chat_template_kwargs enable_thinking parsed");
+    Json enable_same               = enable;
+    enable_same["enable_thinking"] = false;
+    failures += check(parse_chat_completion_request(enable_same, default_limits()).enable_thinking ==
+                          false,
+                      "matching enable_thinking values rejected");
+    Json enable_conflict               = enable;
+    enable_conflict["enable_thinking"] = true;
+    failures += check(
+        throws_api([&] { (void)parse_chat_completion_request(enable_conflict, default_limits()); }),
+        "conflicting enable_thinking values accepted");
+
     Json nulls                    = base;
     nulls["preserve_thinking"]    = nullptr;
     nulls["chat_template_kwargs"] = Json{{"preserve_thinking", nullptr}, {"future", nullptr}};
@@ -168,6 +184,11 @@ int test_preserve_thinking_options() {
     failures +=
         check(throws_api([&] { (void)parse_chat_completion_request(bad_value, default_limits()); }),
               "non-boolean preserve_thinking accepted");
+    Json bad_enable                     = base;
+    bad_enable["chat_template_kwargs"] = Json{{"enable_thinking", "no"}};
+    failures += check(
+        throws_api([&] { (void)parse_chat_completion_request(bad_enable, default_limits()); }),
+        "non-boolean enable_thinking accepted");
     Json unknown                    = base;
     unknown["chat_template_kwargs"] = Json{{"preserve_thinking", true}, {"foo", 1}};
     failures +=
@@ -553,7 +574,8 @@ int test_parse_sampling_carried() {
 
 int test_response_serialization() {
     int failures = 0;
-    const CompletionUsage usage{10, 3};
+    CompletionUsage usage{10, 3};
+    usage.cache_hit_tokens = 7;
     const Json j = Json::parse(
         make_chat_completion_response("id-1", "m", 111, "hello world", "", "stop", usage));
     failures += check(j.at("object") == "chat.completion", "response object");
@@ -570,6 +592,8 @@ int test_response_serialization() {
     failures += check(j.at("usage").at("prompt_tokens") == 10, "usage prompt_tokens");
     failures += check(j.at("usage").at("completion_tokens") == 3, "usage completion_tokens");
     failures += check(j.at("usage").at("total_tokens") == 13, "usage total_tokens");
+    failures += check(j.at("usage").at("prompt_tokens_details").at("cached_tokens") == 7,
+                      "usage cached prompt tokens");
 
     // Non-empty reasoning is attached as message.reasoning_content, content stays answer-only.
     const Json jr = Json::parse(make_chat_completion_response("id-2", "m", 111, "the answer",
@@ -579,6 +603,23 @@ int test_response_serialization() {
     failures +=
         check(jr.at("choices").at(0).at("message").at("reasoning_content") == "let me think",
               "reasoning_content carried");
+
+    // Slot identity is omitted entirely until set, then emitted top-level next to timings.
+    failures += check(!j.contains("id_slot") && !j.contains("session_digest"),
+                      "no slot identity when unset");
+    CompletionUsage slot_usage{10, 3};
+    slot_usage.id_slot        = 1;
+    slot_usage.session_digest = "00ff00ff00ff00ff";
+    const Json js             = Json::parse(
+        make_chat_completion_response("id-3", "m", 111, "hi", "", "stop", slot_usage));
+    failures += check(js.at("id_slot") == 1, "id_slot emitted");
+    failures +=
+        check(js.at("session_digest") == "00ff00ff00ff00ff", "session_digest emitted");
+    const std::string final_chunk = make_chat_chunk_final("id-3", "m", 111, "stop", false,
+                                                          slot_usage);
+    const Json jf = Json::parse(final_chunk.substr(6, final_chunk.size() - 8));
+    failures += check(jf.at("id_slot") == 1 && jf.at("session_digest") == "00ff00ff00ff00ff",
+                      "slot identity on final stream chunk");
     return failures;
 }
 
@@ -652,13 +693,17 @@ int test_chunk_serialization() {
     failures += check(!final_no_usage.contains("usage"), "no usage key when include_usage=false");
 
     // Dedicated usage chunk: empty choices, populated usage.
-    const CompletionUsage usage{2, 5};
+    CompletionUsage usage{2, 5};
+    usage.cache_hit_tokens = 9;
     const Json usage_chunk = parse_sse(make_chat_chunk_usage("id", "m", 1, usage));
     failures += check(usage_chunk.at("choices").is_array() && usage_chunk.at("choices").empty(),
                       "usage chunk has empty choices");
     failures +=
         check(usage_chunk.at("usage").at("prompt_tokens") == 2, "usage chunk prompt_tokens");
     failures += check(usage_chunk.at("usage").at("total_tokens") == 7, "usage chunk total");
+    failures +=
+        check(usage_chunk.at("usage").at("prompt_tokens_details").at("cached_tokens") == 2,
+              "usage chunk cached tokens clamped to prompt");
 
     failures += check(sse_done() == "data: [DONE]\n\n", "done sentinel");
     return failures;

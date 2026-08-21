@@ -127,9 +127,13 @@ private:
     std::shared_ptr<const Impl> impl_;
 
     friend class FrontendTestAccess;
-    friend Frontend make_frontend(const FrontendResources& resources, bool vision_enabled);
+    friend Frontend make_frontend(const FrontendResources& resources, bool vision_enabled,
+                                  std::uint32_t vision_max_tokens,
+                                  std::uint32_t image_token_budget);
 };
 
-[[nodiscard]] Frontend make_frontend(const FrontendResources& resources, bool vision_enabled);
+[[nodiscard]] Frontend make_frontend(const FrontendResources& resources, bool vision_enabled,
+                                     std::uint32_t vision_max_tokens = 8192,
+                                     std::uint32_t image_token_budget = 0);
 
 } // namespace ninfer::targets::qwen3_6

@@ -1,5 +1,6 @@
 #include "serve/openai_schema.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <limits>
 #include <random>
 #include <string>
+#include <unordered_set>
 
 namespace ninfer::serve {
 namespace {
@@ -296,6 +298,7 @@ void parse_tools(const Json& body, GenerationRequest& out) {
     const Json& tools = body.at("tools");
     if (!tools.is_array()) { bad_request("tools must be an array", "tools"); }
     out.tools.reserve(tools.size());
+    std::unordered_set<std::string> names;
     for (std::size_t i = 0; i < tools.size(); ++i) {
         const Json& item = tools.at(i);
         if (!item.is_object()) { bad_request("tools entries must be objects", "tools"); }
@@ -312,6 +315,9 @@ void parse_tools(const Json& body, GenerationRequest& out) {
         Json& fn        = normalized["function"];
         ToolDefinition tool;
         tool.name = require_function_name(fn, "tools");
+        if (!names.insert(tool.name).second) {
+            bad_request("duplicate function tool name: " + tool.name, "tools");
+        }
         if (fn.contains("description") && !fn.at("description").is_null()) {
             if (!fn.at("description").is_string()) {
                 bad_request("function description must be a string", "tools");
@@ -460,6 +466,44 @@ Json base_chunk(const std::string& id, const std::string& model, std::int64_t cr
         {"id", id}, {"object", "chat.completion.chunk"}, {"created", created}, {"model", model}};
 }
 
+// llama.cpp-compatible `timings` block: consumed by proxies (llama-swap) to
+// populate per-request Prefill/Decode rates, draft acceptance, cache hits and
+// phase durations. Shape matches llama.cpp's server `timings` JSON so existing
+// metric parsers work unchanged.
+// Slot identity next to `timings`: which lane served the request and, when that lane retained
+// the finished session, its digest - what a client needs to target /slots operations safely.
+void add_slot_identity(Json& payload, const CompletionUsage& usage) {
+    if (usage.id_slot >= 0) { payload["id_slot"] = usage.id_slot; }
+    if (!usage.session_digest.empty()) { payload["session_digest"] = usage.session_digest; }
+}
+
+void add_timings(Json& payload, const CompletionUsage& usage) {
+    if (!usage.has_timings) { return; }
+    Json timings = {
+        {"prompt_n", usage.prompt_tokens},
+        {"predicted_n", usage.completion_tokens},
+        {"prompt_ms", usage.prefill_seconds * 1000.0},
+        {"predicted_ms", usage.decode_seconds * 1000.0},
+    };
+    if (usage.prefill_seconds > 0.0) {
+        timings["prompt_per_second"] = usage.prompt_tokens / usage.prefill_seconds;
+    }
+    if (usage.decode_seconds > 0.0) {
+        timings["predicted_per_second"] = usage.completion_tokens / usage.decode_seconds;
+    }
+    if (usage.ttft_seconds > 0.0) {
+        timings["ttft_ms"] = usage.ttft_seconds * 1000.0;
+    }
+    if (usage.cache_hit_tokens > 0) {
+        timings["cache_n"] = usage.cache_hit_tokens;
+    }
+    if (usage.draft_tokens > 0) {
+        timings["draft_n"]     = usage.draft_tokens;
+        timings["draft_n_accepted"] = usage.accepted_tokens;
+    }
+    payload["timings"] = std::move(timings);
+}
+
 Json tool_calls_json(const std::vector<ToolCall>& tool_calls, bool include_index) {
     Json out = Json::array();
     for (std::size_t i = 0; i < tool_calls.size(); ++i) {
@@ -477,6 +521,22 @@ std::string sse_event(const Json& payload) { return "data: " + payload.dump() + 
 
 } // namespace
 
+std::optional<bool> parse_openai_template_enable_thinking(const Json& body) {
+    if (!body.contains("chat_template_kwargs")) { return std::nullopt; }
+    const Json& kwargs = body.at("chat_template_kwargs");
+    if (!kwargs.is_object()) {
+        bad_request("chat_template_kwargs must be an object", "chat_template_kwargs");
+    }
+    if (!kwargs.contains("enable_thinking") || kwargs.at("enable_thinking").is_null()) {
+        return std::nullopt;
+    }
+    if (!kwargs.at("enable_thinking").is_boolean()) {
+        bad_request("chat_template_kwargs.enable_thinking must be a boolean or null",
+                    "chat_template_kwargs");
+    }
+    return kwargs.at("enable_thinking").get<bool>();
+}
+
 std::optional<bool> parse_openai_preserve_thinking(const Json& body) {
     std::optional<bool> top_level;
     if (body.contains("preserve_thinking") && !body.at("preserve_thinking").is_null()) {
@@ -493,7 +553,8 @@ std::optional<bool> parse_openai_preserve_thinking(const Json& body) {
             bad_request("chat_template_kwargs must be an object", "chat_template_kwargs");
         }
         for (auto it = kwargs.begin(); it != kwargs.end(); ++it) {
-            if (it.key() != "preserve_thinking" && !it.value().is_null()) {
+            if (it.key() != "preserve_thinking" && it.key() != "enable_thinking" &&
+                !it.value().is_null()) {
                 bad_request("chat_template_kwargs." + it.key() + " is not supported",
                             "chat_template_kwargs", "chat_template_option_not_supported");
             }
@@ -551,11 +612,24 @@ GenerationRequest parse_chat_completion_request(const Json& body, const RequestL
     if (body.contains("stream_options") && body.at("stream_options").is_object()) {
         out.include_usage = get_bool(body.at("stream_options"), "include_usage", false);
     }
-    if (body.contains("enable_thinking") && !body.at("enable_thinking").is_null()) {
-        out.enable_thinking = get_bool(body, "enable_thinking", false);
-    }
     parse_openai_reasoning_effort(body, out);
     out.preserve_thinking = parse_openai_preserve_thinking(body);
+    std::optional<bool> top_level_thinking;
+    if (body.contains("enable_thinking") && !body.at("enable_thinking").is_null()) {
+        top_level_thinking = get_bool(body, "enable_thinking", false);
+    }
+    const std::optional<bool> template_thinking =
+        parse_openai_template_enable_thinking(body);
+    if (top_level_thinking && template_thinking &&
+        *top_level_thinking != *template_thinking) {
+        bad_request("conflicting enable_thinking values", "enable_thinking",
+                    "conflicting_template_option");
+    }
+    if (template_thinking) {
+        out.enable_thinking = *template_thinking;
+    } else if (top_level_thinking) {
+        out.enable_thinking = *top_level_thinking;
+    }
 
     std::optional<int> max_tokens = get_int(body, "max_completion_tokens");
     if (!max_tokens) { max_tokens = get_int(body, "max_tokens"); }
@@ -570,13 +644,26 @@ GenerationRequest parse_chat_completion_request(const Json& body, const RequestL
     return out;
 }
 
+namespace {
+
+Json usage_json(const CompletionUsage& usage) {
+    const std::int64_t cached =
+        std::clamp<std::int64_t>(usage.cache_hit_tokens, 0, usage.prompt_tokens);
+    return Json{{"prompt_tokens", usage.prompt_tokens},
+                {"completion_tokens", usage.completion_tokens},
+                {"total_tokens", usage.prompt_tokens + usage.completion_tokens},
+                {"prompt_tokens_details", Json{{"cached_tokens", cached}}}};
+}
+
+} // namespace
+
 std::string make_chat_completion_response(const std::string& id, const std::string& model,
                                           std::int64_t created, const std::string& content,
                                           const std::string& reasoning, const char* finish_reason,
                                           const CompletionUsage& usage) {
     Json message = {{"role", "assistant"}, {"content", content}};
     if (!reasoning.empty()) { message["reasoning_content"] = reasoning; }
-    const Json payload = {
+    Json payload = {
         {"id", id},
         {"object", "chat.completion"},
         {"created", created},
@@ -584,9 +671,9 @@ std::string make_chat_completion_response(const std::string& id, const std::stri
         {"choices",
          Json::array({Json{
              {"index", 0}, {"message", std::move(message)}, {"finish_reason", finish_reason}}})},
-        {"usage", Json{{"prompt_tokens", usage.prompt_tokens},
-                       {"completion_tokens", usage.completion_tokens},
-                       {"total_tokens", usage.prompt_tokens + usage.completion_tokens}}}};
+        {"usage", usage_json(usage)}};
+    add_timings(payload, usage);
+    add_slot_identity(payload, usage);
     return payload.dump();
 }
 
@@ -599,7 +686,7 @@ std::string make_chat_completion_tool_response(const std::string& id, const std:
                     {"content", content.empty() ? Json(nullptr) : Json(content)},
                     {"tool_calls", tool_calls_json(tool_calls, false)}};
     if (!reasoning.empty()) { message["reasoning_content"] = reasoning; }
-    const Json payload = {
+    Json payload = {
         {"id", id},
         {"object", "chat.completion"},
         {"created", created},
@@ -607,9 +694,9 @@ std::string make_chat_completion_tool_response(const std::string& id, const std:
         {"choices",
          Json::array({Json{
              {"index", 0}, {"message", std::move(message)}, {"finish_reason", "tool_calls"}}})},
-        {"usage", Json{{"prompt_tokens", usage.prompt_tokens},
-                       {"completion_tokens", usage.completion_tokens},
-                       {"total_tokens", usage.prompt_tokens + usage.completion_tokens}}}};
+        {"usage", usage_json(usage)}};
+    add_timings(payload, usage);
+    add_slot_identity(payload, usage);
     return payload.dump();
 }
 
@@ -659,11 +746,13 @@ std::string make_chat_chunk_tool_calls(const std::string& id, const std::string&
 
 std::string make_chat_chunk_final(const std::string& id, const std::string& model,
                                   std::int64_t created, const char* finish_reason,
-                                  bool include_usage) {
+                                  bool include_usage, const CompletionUsage& usage) {
     Json payload       = base_chunk(id, model, created);
     payload["choices"] = Json::array(
         {Json{{"index", 0}, {"delta", Json::object()}, {"finish_reason", finish_reason}}});
     if (include_usage) { payload["usage"] = nullptr; }
+    add_timings(payload, usage);
+    add_slot_identity(payload, usage);
     return sse_event(payload);
 }
 
@@ -671,9 +760,9 @@ std::string make_chat_chunk_usage(const std::string& id, const std::string& mode
                                   std::int64_t created, const CompletionUsage& usage) {
     Json payload       = base_chunk(id, model, created);
     payload["choices"] = Json::array();
-    payload["usage"]   = Json{{"prompt_tokens", usage.prompt_tokens},
-                              {"completion_tokens", usage.completion_tokens},
-                              {"total_tokens", usage.prompt_tokens + usage.completion_tokens}};
+    payload["usage"]   = usage_json(usage);
+    add_timings(payload, usage);
+    add_slot_identity(payload, usage);
     return sse_event(payload);
 }
 
