@@ -205,6 +205,7 @@ process.stdout.write(JSON.stringify({{
         self.assertIn('<select name="reasoning_effort">', html)
         self.assertIn('<option value="none" data-i18n="settings.reasoningOff">', html)
         self.assertIn('input name="chinese_reasoning" type="checkbox"', html)
+        self.assertIn('data-i18n="settings.chineseReasoningHelp"', html)
         self.assertNotIn('input name="thinking"', html)
 
     def test_static_translation_keys_exist_in_both_languages(self):
