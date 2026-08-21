@@ -528,6 +528,7 @@ int test_reasoning_languages() {
 
     options.enable_thinking    = true;
     options.reasoning_language = ninfer::ReasoningLanguage::English;
+    options.preserve_thinking  = true;
     fi::ChatMessage history     = chat_message("assistant", "答案是 31。");
     history.reasoning_content   = "我们需要用中文分析。";
     const std::string english =
@@ -539,8 +540,8 @@ int test_reasoning_languages() {
     failures += check(
         english.find("All reasoning must use English") != std::string::npos,
         "English reasoning did not inject the language constraint");
-    failures += check(english.find("我们需要用中文分析。") == std::string::npos,
-                      "explicit English mode retained conflicting reasoning history");
+    failures += check(english.find("我们需要用中文分析。") != std::string::npos,
+                      "explicit English mode ignored preserve-thinking");
     failures += check(
         english.ends_with(
             "<|im_start|>assistant\n<think>\nI must use English for every reasoning sentence "
@@ -562,9 +563,9 @@ int test_reasoning_languages() {
         {chat_message("user", "查询天气。"), first_tool_call, tool_result, second_tool_call,
          chat_message("tool", "done")},
         options);
-    failures += check(forced_tool_loop.text.find("第一段中文推理。") == std::string::npos &&
-                          forced_tool_loop.text.find("第二段中文推理。") == std::string::npos,
-                      "explicit language retained tool-loop reasoning history");
+    failures += check(forced_tool_loop.text.find("第一段中文推理。") != std::string::npos &&
+                          forced_tool_loop.text.find("第二段中文推理。") != std::string::npos,
+                      "explicit language ignored preserve-thinking in a tool loop");
     failures += check(
         forced_tool_loop.text.find("工具调用前的回答。") != std::string::npos &&
             forced_tool_loop.text.find("继续调用后的回答。") != std::string::npos &&
@@ -589,8 +590,8 @@ int test_reasoning_languages() {
                      chat_message("user", "Continue.")},
                     options)
             .text;
-    failures += check(chinese.find("We should reason in English.") == std::string::npos,
-                      "explicit Chinese mode retained conflicting English reasoning history");
+    failures += check(chinese.find("We should reason in English.") != std::string::npos,
+                      "explicit Chinese mode ignored preserve-thinking");
     return failures;
 }
 

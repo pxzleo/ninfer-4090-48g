@@ -32,8 +32,8 @@ template's default. An artifact whose template does not expose effort rejects th
 continuation immediately after `<think>` for the selected reasoning language; it cannot be combined
 with `--no-thinking`. This is prompt steering rather than a character-level decoding constraint, so
 code, identifiers, commands, formulas, and technical terms can still remain in their original
-form. An explicit reasoning language takes priority over `preserve_thinking`: prior reasoning traces
-are omitted from later prompts, while prior answers, tool calls, and tool results are retained.
+form. Prior reasoning traces remain controlled by `preserve_thinking`, independently of the
+selected language.
 `--greedy` selects exact argmax decoding independently.
 
 ## Startup memory profile

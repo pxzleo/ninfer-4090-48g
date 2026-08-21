@@ -474,11 +474,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         reasoning = trim_ascii_whitespace(reasoning);
 
         const bool preserve_thinking = options.preserve_thinking.value_or(effort_template);
-        const bool language_forced =
-            options.reasoning_language != ReasoningLanguage::Unspecified;
-        const bool keep_thinking =
-            !language_forced &&
-            (preserve_thinking || (static_cast<long>(i) > last_query_index));
+        const bool keep_thinking = preserve_thinking || (static_cast<long>(i) > last_query_index);
         rendered += "<|im_start|>assistant\n";
         if (!turn_rewrite_byte_offset && static_cast<long>(i) > last_query_index) {
             turn_rewrite_byte_offset = rendered.size();

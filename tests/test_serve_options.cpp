@@ -243,8 +243,8 @@ int main() {
     failures += check(
         configured_semantics.reasoning_language == ninfer::ReasoningLanguage::SimplifiedChinese,
         "server reasoning-language default was not resolved");
-    failures += check(!configured_semantics.preserve_thinking,
-                      "explicit reasoning language did not disable effective history preservation");
+    failures += check(configured_semantics.preserve_thinking,
+                      "explicit reasoning language overrode effective history preservation");
     failures += check(
         to_prompt_input(request, configured_semantics, {}).options.reasoning_language ==
             ninfer::ReasoningLanguage::SimplifiedChinese,

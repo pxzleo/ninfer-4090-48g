@@ -127,9 +127,6 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
             result.reasoning_effort.reset();
             result.reasoning_language = ninfer::ReasoningLanguage::Unspecified;
         }
-        if (result.reasoning_language != ninfer::ReasoningLanguage::Unspecified) {
-            result.preserve_thinking = false;
-        }
         return result;
     }
 
@@ -177,9 +174,6 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
                                   std::string(requested_reasoning_effort_name(requested)) +
                                   "' is not supported by the loaded chat template",
                               request.reasoning_effort_param, "reasoning_effort_not_supported");
-    }
-    if (result.reasoning_language != ninfer::ReasoningLanguage::Unspecified) {
-        result.preserve_thinking = false;
     }
     return result;
 }

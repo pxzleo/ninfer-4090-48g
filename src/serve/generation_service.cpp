@@ -362,9 +362,7 @@ PreparedRequest GenerationService::prepare(const GenerationRequest& request,
         resolve_prompt_semantics(request, options_, prompt_capabilities_);
     prepared.enable_thinking                   = semantics.enable_thinking;
     prepared.preserve_thinking                 = semantics.preserve_thinking;
-    prepared.preserve_thinking_semantic_change =
-        request.preserve_thinking_semantic_change &&
-        semantics.reasoning_language == ninfer::ReasoningLanguage::Unspecified;
+    prepared.preserve_thinking_semantic_change = request.preserve_thinking_semantic_change;
     const std::size_t media_items              = media_item_count(request);
     const bool request_has_media               = media_items != 0;
     if (request_has_media && !options_.enable_vision) {

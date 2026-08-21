@@ -346,12 +346,10 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
     else:
         _set_flag(tokens, "--no-thinking", False)
         _replace_value(tokens, "--reasoning-effort", str(config["reasoning_effort"]))
-    if config["reasoning_effort"] == "none":
-        _remove_value(tokens, "--reasoning-language")
-    elif config["chinese_reasoning"]:
+    if config["reasoning_effort"] != "none" and config["chinese_reasoning"]:
         _replace_value(tokens, "--reasoning-language", "zh-CN")
     else:
-        _replace_value(tokens, "--reasoning-language", "en-US")
+        _remove_value(tokens, "--reasoning-language")
     _set_flag(tokens, "--no-prefix-reuse", not bool(config["prefix_reuse"]))
     _set_flag(tokens, "--no-cuda-graph", not bool(config["cuda_graph"]))
 

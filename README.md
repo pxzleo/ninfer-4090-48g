@@ -342,9 +342,10 @@ interrupt active and queued inference requests and therefore use a standard conf
 The page also configures Qwen3.8's default reasoning level as Off, Low, Medium, or High. Off maps
 to `--no-thinking`; the other levels are written explicitly as
 `--reasoning-effort low|medium|xhigh`. A separate Chinese reasoning switch is off by default.
-Enabling it writes `--reasoning-language zh-CN`; disabling it writes
-`--reasoning-language en-US` so preserved Chinese reasoning history cannot keep steering later
-turns to Chinese. Changes take effect after saving and restarting.
+Enabling it writes `--reasoning-language zh-CN`; disabling it removes the option and restores the
+template's default language behavior. Reasoning history remains controlled independently by
+`--preserve-thinking`. Changes take effect after saving and restarting; the UI labels the switch as
+applying to new sessions.
 
 The same page can delete throughput history for an inclusive local-calendar date range. This
 operation is irreversible and requires a typed confirmation phrase. It does not disable future
@@ -491,13 +492,12 @@ accepts a top-level `reasoning_effort` field (`low`, `medium`, `xhigh`) and eith
 separately as `message.reasoning_content`. Contradictory aliases are rejected. For the CLI, pass
 `--reasoning-effort` or `--no-thinking`. Sampling defaults come from the model card and switch
 with the thinking mode. To steer the complete reasoning trace and default answer language to
-Simplified Chinese, add `--reasoning-language zh-CN`. To explicitly restore English reasoning even
-when earlier Chinese reasoning is preserved in the conversation, use `--reasoning-language en-US`.
+Simplified Chinese, add `--reasoning-language zh-CN`. To explicitly steer new reasoning toward
+English, use `--reasoning-language en-US`.
 Both modes combine a system constraint with a short continuation immediately after `<think>`; this
 is prompt steering rather than a character-level mask, so code and technical terms remain usable.
-When a reasoning language is selected explicitly, prior reasoning traces are omitted from the next
-prompt so a long tool session cannot anchor the model to the previous language; prior answers, tool
-calls, and tool results remain available.
+`--preserve-thinking` independently controls whether prior reasoning traces remain in later prompts;
+language steering does not override that setting.
 
 ## Serving APIs
 
