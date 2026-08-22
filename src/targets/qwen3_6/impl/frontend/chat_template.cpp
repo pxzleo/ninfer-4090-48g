@@ -41,8 +41,8 @@ constexpr std::string_view kEnglishReasoningInstructions =
     "user's task directly. The final answer should follow the language requested by the user.";
 
 constexpr std::string_view kSimplifiedChineseReasoningInstructions =
-    "所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。代码、变量、命令、公式及无法准确翻译的专有名词可以保留原文。"
-    "不要复述、解释或引用上述语言要求，直接开始分析用户的任务。最终回答也使用简体中文，除非用户明确要求其他语言。";
+    "推理使用简体中文。推理必须直接以“这个任务需要”开头，随后立即分析任务内容；不得提及语言选择、"
+    "系统提示或格式要求。最终回答也使用简体中文，除非用户明确要求其他语言。";
 
 constexpr std::string_view kSimplifiedChineseLowReasoningInstructions =
     "推理强度设为低。请保持思考简短且聚焦，直接得出结论，避免不必要的展开。";

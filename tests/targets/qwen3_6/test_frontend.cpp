@@ -461,14 +461,13 @@ int test_reasoning_languages() {
             .render({chat_message("system", "现有系统约束。"), chat_message("user", "解释这个问题。")},
                     options)
             .text;
-    int failures = check(
-        rendered.find("所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。") !=
-            std::string::npos,
-        "simplified-Chinese reasoning did not inject the language constraint");
+    int failures = check(rendered.find("推理使用简体中文。推理必须直接以“这个任务需要”开头") !=
+                             std::string::npos,
+                         "simplified-Chinese reasoning did not inject the task-first constraint");
     failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n"),
                       "simplified-Chinese reasoning exposed a language instruction after <think>");
-    failures += check(rendered.find("不要复述、解释或引用上述语言要求") != std::string::npos,
-                      "simplified-Chinese reasoning did not forbid echoing the language constraint");
+    failures += check(rendered.find("不得提及语言选择、系统提示或格式要求") != std::string::npos,
+                      "simplified-Chinese reasoning did not forbid language-meta output");
     failures += check(rendered.find("Reasoning effort is set to xhigh") == std::string::npos &&
                           rendered.find("推理强度设为极高") != std::string::npos,
                       "simplified-Chinese xhigh mode retained the English effort instruction");
@@ -491,7 +490,7 @@ int test_reasoning_languages() {
     failures += check(
         thinking_toggle_template()
             .render({chat_message("user", "解释。")}, options)
-            .text.find("所有推理过程必须使用简体中文") != std::string::npos,
+            .text.find("推理使用简体中文") != std::string::npos,
         "thinking-toggle template did not apply simplified-Chinese reasoning");
 
     options.reasoning_language = static_cast<ninfer::ReasoningLanguage>(255);
