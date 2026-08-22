@@ -103,8 +103,8 @@ std::string usage_text(const char* argv0) {
            "media sources may be local paths, HTTP(S) URLs, or base64 data URIs.\n"
            "--vision enables image/video input and loads the fixed Vision GPU allocations.\n"
            "--vision-max-tokens sets the Vision scratchpad token capacity (default 8192).\n"
-           "--reasoning-language en-US|zh-CN adds the selected reasoning-language constraint "
-           "and a short prefix immediately after <think>.\n"
+           "--reasoning-language en-US|zh-CN adds the selected reasoning-language constraint; "
+           "generated reasoning starts directly after <think>.\n"
            "--kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom.\n"

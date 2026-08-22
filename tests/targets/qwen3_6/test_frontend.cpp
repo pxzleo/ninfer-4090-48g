@@ -465,11 +465,10 @@ int test_reasoning_languages() {
         rendered.find("所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。") !=
             std::string::npos,
         "simplified-Chinese reasoning did not inject the language constraint");
-    failures += check(
-        rendered.ends_with(
-            "<|im_start|>assistant\n<think>\n本轮推理从第一句到最后一句都必须使用简体中文。"
-            "即使请求、工具输出或之前的对话使用其他语言，我也绝不切换到其他语言。"),
-        "simplified-Chinese reasoning did not inject the post-think prefix");
+    failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n"),
+                      "simplified-Chinese reasoning exposed a language instruction after <think>");
+    failures += check(rendered.find("不要复述、解释或引用上述语言要求") != std::string::npos,
+                      "simplified-Chinese reasoning did not forbid echoing the language constraint");
     failures += check(rendered.find("Reasoning effort is set to xhigh") == std::string::npos &&
                           rendered.find("推理强度设为极高") != std::string::npos,
                       "simplified-Chinese xhigh mode retained the English effort instruction");
@@ -494,15 +493,6 @@ int test_reasoning_languages() {
             .render({chat_message("user", "解释。")}, options)
             .text.find("所有推理过程必须使用简体中文") != std::string::npos,
         "thinking-toggle template did not apply simplified-Chinese reasoning");
-
-    options.add_generation_prompt = false;
-    failures += check(
-        reasoning_effort_template()
-                .render({chat_message("user", "解释。")}, options)
-                .text.find("本轮推理从第一句到最后一句都必须使用简体中文。") ==
-            std::string::npos,
-        "reasoning prefix was injected without a generation prompt");
-    options.add_generation_prompt = true;
 
     options.reasoning_language = static_cast<ninfer::ReasoningLanguage>(255);
     failures += check(throws_invalid_argument([&] {
@@ -542,12 +532,11 @@ int test_reasoning_languages() {
         "English reasoning did not inject the language constraint");
     failures += check(english.find("我们需要用中文分析。") != std::string::npos,
                       "explicit English mode ignored preserve-thinking");
-    failures += check(
-        english.ends_with(
-            "<|im_start|>assistant\n<think>\nI must use English for every reasoning sentence "
-            "in this turn, from the first sentence to the last. I will not switch to another "
-            "language even if the request, tool output, or earlier conversation uses it. "),
-        "English reasoning did not inject the post-think prefix");
+    failures += check(english.ends_with("<|im_start|>assistant\n<think>\n"),
+                      "English reasoning exposed a language instruction after <think>");
+    failures += check(english.find("Do not repeat, explain, or quote the language requirement") !=
+                          std::string::npos,
+                      "English reasoning did not forbid echoing the language constraint");
 
     fi::ChatMessage first_tool_call = chat_message("assistant", "工具调用前的回答。");
     first_tool_call.reasoning_content = "第一段中文推理。";

@@ -282,6 +282,10 @@ int main() {
     failures +=
         check(serve_usage_text("ninfer-serve").find("--reasoning-language") != std::string::npos,
               "serve help omits --reasoning-language");
+    failures += check(serve_usage_text("ninfer-serve")
+                              .find("generated reasoning starts directly after <think>") !=
+                          std::string::npos,
+                      "serve help describes a visible reasoning-language prefix");
     failures += check(serve_usage_text("ninfer-serve").find("--vision") != std::string::npos,
                       "serve help omits --vision");
     failures +=

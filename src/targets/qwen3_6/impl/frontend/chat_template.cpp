@@ -37,26 +37,18 @@ constexpr std::string_view kXHighReasoningInstructions =
 constexpr std::string_view kEnglishReasoningInstructions =
     "All reasoning must use English. Do not use complete non-English sentences in the analysis. "
     "Code, variables, commands, formulas, and technical terms may remain in their original form. "
-    "The final answer should follow the language requested by the user.";
-
-constexpr std::string_view kEnglishReasoningPrefix =
-    "I must use English for every reasoning sentence in this turn, from the first sentence to "
-    "the last. I will not switch to another language even if the request, tool output, or earlier "
-    "conversation uses it. ";
+    "Do not repeat, explain, or quote the language requirement; begin by reasoning about the "
+    "user's task directly. The final answer should follow the language requested by the user.";
 
 constexpr std::string_view kSimplifiedChineseReasoningInstructions =
     "所有推理过程必须使用简体中文，不得使用完整英文句子进行分析。代码、变量、命令、公式及无法准确翻译的专有名词可以保留原文。"
-    "最终回答也使用简体中文，除非用户明确要求其他语言。";
+    "不要复述、解释或引用上述语言要求，直接开始分析用户的任务。最终回答也使用简体中文，除非用户明确要求其他语言。";
 
 constexpr std::string_view kSimplifiedChineseLowReasoningInstructions =
     "推理强度设为低。请保持思考简短且聚焦，直接得出结论，避免不必要的展开。";
 
 constexpr std::string_view kSimplifiedChineseXHighReasoningInstructions =
     "推理强度设为极高。请仔细分析任务，验证关键假设，考虑合理的替代方案，并优先保证最终答案正确、一致且清晰。";
-
-constexpr std::string_view kSimplifiedChineseReasoningPrefix =
-    "本轮推理从第一句到最后一句都必须使用简体中文。即使请求、工具输出或之前的对话使用其他语言，"
-    "我也绝不切换到其他语言。";
 
 bool is_allowed_role(const std::string& role) {
     return role == "system" || role == "user" || role == "assistant" || role == "tool";
@@ -504,11 +496,6 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         if (!turn_rewrite_byte_offset) { turn_rewrite_byte_offset = rendered.size(); }
         if (options.enable_thinking) {
             rendered += "<think>\n";
-            if (options.reasoning_language == ReasoningLanguage::SimplifiedChinese) {
-                rendered += kSimplifiedChineseReasoningPrefix;
-            } else if (options.reasoning_language == ReasoningLanguage::English) {
-                rendered += kEnglishReasoningPrefix;
-            }
         } else {
             rendered += "<think>\n\n</think>\n\n";
         }

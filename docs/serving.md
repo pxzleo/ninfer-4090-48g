@@ -495,7 +495,7 @@ curl http://127.0.0.1:8080/v1/models \
 | `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
 | `--no-thinking` | disable thinking by default | thinking on |
 | `--reasoning-effort low\|medium\|xhigh` | default reasoning effort for templates that support it; cannot be combined with `--no-thinking` | template default (Qwen3.8: `xhigh`) |
-| `--reasoning-language en-US\|zh-CN` | steer reasoning to English or Simplified Chinese with a system constraint and a short continuation immediately after `<think>`; cannot be combined with `--no-thinking` | unset |
+| `--reasoning-language en-US\|zh-CN` | steer reasoning to English or Simplified Chinese with a system constraint; generated reasoning starts directly after `<think>`; cannot be combined with `--no-thinking` | unset |
 | `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
 | `--cors` | permissive browser CORS headers | off |
 | `--temperature F` | process-level temperature override | unset |

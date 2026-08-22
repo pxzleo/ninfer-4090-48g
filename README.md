@@ -494,8 +494,9 @@ separately as `message.reasoning_content`. Contradictory aliases are rejected. F
 with the thinking mode. To steer the complete reasoning trace and default answer language to
 Simplified Chinese, add `--reasoning-language zh-CN`. To explicitly steer new reasoning toward
 English, use `--reasoning-language en-US`.
-Both modes combine a system constraint with a short continuation immediately after `<think>`; this
-is prompt steering rather than a character-level mask, so code and technical terms remain usable.
+Both modes add a system constraint while generated reasoning begins directly after `<think>`
+without exposing the constraint as a prefix. This is prompt steering rather than a character-level
+mask, so code and technical terms remain usable.
 `--preserve-thinking` independently controls whether prior reasoning traces remain in later prompts;
 language steering does not override that setting.
 

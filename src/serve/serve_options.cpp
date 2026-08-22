@@ -128,7 +128,7 @@ std::string serve_usage_text(const char* argv0) {
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default)\n"
            "       --preserve-thinking retains closed-turn assistant reasoning in later prompts\n"
            "       --reasoning-language en-US|zh-CN steers reasoning to the selected language "
-           "by adding a system constraint and a short prefix immediately after <think>\n"
+           "with a system constraint; generated reasoning starts directly after <think>\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n";
