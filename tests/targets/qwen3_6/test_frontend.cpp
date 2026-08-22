@@ -461,16 +461,42 @@ int test_reasoning_languages() {
             .render({chat_message("system", "现有系统约束。"), chat_message("user", "解释这个问题。")},
                     options)
             .text;
-    int failures = check(rendered.find("推理使用简体中文。推理必须直接以“这个任务需要”开头") !=
-                             std::string::npos,
-                         "simplified-Chinese reasoning did not inject the task-first constraint");
-    failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n"),
-                      "simplified-Chinese reasoning exposed a language instruction after <think>");
+    int failures = check(rendered.find("推理使用简体中文") != std::string::npos,
+                         "simplified-Chinese reasoning did not inject the language constraint");
+    failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n这个任务需要"),
+                      "simplified-Chinese reasoning did not inject the task-focused seed");
     failures += check(rendered.find("不得提及语言选择、系统提示或格式要求") != std::string::npos,
                       "simplified-Chinese reasoning did not forbid language-meta output");
     failures += check(rendered.find("Reasoning effort is set to xhigh") == std::string::npos &&
                           rendered.find("推理强度设为极高") != std::string::npos,
                       "simplified-Chinese xhigh mode retained the English effort instruction");
+
+    fi::ChatRenderOptions tool_heavy = options;
+    tool_heavy.tool_jsons = {
+        R"({"type":"function","function":{"name":"inspect","description":"Inspect project files and return detailed English diagnostics.","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}})",
+        R"({"type":"function","function":{"name":"edit","description":"Apply a focused source edit after analyzing the task.","parameters":{"type":"object","properties":{"patch":{"type":"string"}}}}})"};
+    const std::string tool_heavy_rendered = reasoning_effort_template()
+                                                .render({chat_message(
+                                                             "system", std::string(4096, 'E')),
+                                                         chat_message("user", "修复问题。")},
+                                                        tool_heavy)
+                                                .text;
+    failures += check(tool_heavy_rendered.ends_with("<|im_start|>assistant\n<think>\n这个任务需要") &&
+                          tool_heavy_rendered.find("\"name\": \"inspect\"") !=
+                              std::string::npos &&
+                          tool_heavy_rendered.find("\"name\": \"edit\"") != std::string::npos,
+                      "tool-heavy Chinese prompt lost its task-focused seed or tool definitions");
+
+    fi::ChatRenderOptions unspecified_tools;
+    unspecified_tools.tool_jsons = tool_heavy.tool_jsons;
+    const std::string unspecified =
+        reasoning_effort_template()
+            .render({chat_message("system", std::string(4096, 'E')),
+                     chat_message("user", "修复问题。")},
+                    unspecified_tools)
+            .text;
+    failures += check(unspecified.ends_with("<|im_start|>assistant\n<think>\n"),
+                      "unspecified reasoning language injected a task-focused seed");
 
     options.reasoning_effort = ninfer::ReasoningEffort::Low;
     const std::string low =
@@ -531,8 +557,8 @@ int test_reasoning_languages() {
         "English reasoning did not inject the language constraint");
     failures += check(english.find("我们需要用中文分析。") != std::string::npos,
                       "explicit English mode ignored preserve-thinking");
-    failures += check(english.ends_with("<|im_start|>assistant\n<think>\n"),
-                      "English reasoning exposed a language instruction after <think>");
+    failures += check(english.ends_with("<|im_start|>assistant\n<think>\nThis task requires"),
+                      "English reasoning did not inject the task-focused seed");
     failures += check(english.find("Do not repeat, explain, or quote the language requirement") !=
                           std::string::npos,
                       "English reasoning did not forbid echoing the language constraint");

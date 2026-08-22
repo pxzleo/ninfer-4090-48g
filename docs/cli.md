@@ -28,12 +28,13 @@ Thinking is enabled by default. If the chat template embedded in the loaded arti
 reasoning effort, `--reasoning-effort low|medium|xhigh` selects it; omitting the option uses the
 template's default. An artifact whose template does not expose effort rejects the option. Add
 `--no-thinking` for direct-response prompt rendering; it cannot be combined with
-`--reasoning-effort`. `--reasoning-language en-US|zh-CN` adds a system constraint for the selected
-reasoning language; it cannot be combined with `--no-thinking`. The generated reasoning begins
-directly after `<think>` without exposing that constraint as a reasoning prefix. This is prompt
-steering rather than a character-level decoding constraint, so code, identifiers, commands,
-formulas, and technical terms can still remain in their original form. Prior reasoning traces
-remain controlled by `preserve_thinking`, independently of the selected language.
+`--reasoning-effort`. `--reasoning-language en-US|zh-CN` adds a system constraint and a short
+task-focused seed after `<think>` for the selected reasoning language; it cannot be combined with
+`--no-thinking`. The seed anchors the generated language without exposing the language rule as
+reasoning content. This is prompt steering rather than a character-level decoding constraint, so
+code, identifiers, commands, formulas, and technical terms can still remain in their original
+form. Prior reasoning traces remain controlled by `preserve_thinking`, independently of the
+selected language.
 `--greedy` selects exact argmax decoding independently.
 
 ## Startup memory profile
