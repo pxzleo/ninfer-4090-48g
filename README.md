@@ -44,6 +44,22 @@ For scale: llama.cpp on the same card decodes the Qwen3.8-27B `UD-Q4_K_XL` GGUF 
 on an RTX 5090 measures 172 tok/s on the same code-generation prompts with a 400 W power cap
 (the upstream README quotes about 200), so this card lands within 14% of it under MTP.
 
+### Cross-backend speed and accuracy benchmark
+
+The separate
+[Qwen3.8-27B Local Inference Benchmark](https://github.com/pxzleo/qwen3.8-27b-local-inference-benchmark)
+provides documented, partially reproducible speed and accuracy comparisons across this NInfer
+deployment, q27 Q6_K, vLLM FP8, and a dual-GPU llama.cpp BF16 reference. It includes the serving
+configurations, benchmark runner, methodology, curated per-request results, and aggregate accuracy
+tables for an RTX 4090 48 GB workstation with an additional RTX 3090 24 GB used by the BF16
+reference.
+
+On its matched code-review workload, NInfer recorded the fastest single-request decode rate and
+shared the leading four-request throughput tier with q27. The accuracy samples did not establish a
+stable overall ranking, so the benchmark reports eligibility, truncation, and rerun results rather
+than presenting speed as an accuracy proxy. See the benchmark repository for the full results,
+limitations, and reproduction instructions.
+
 ### Depth sweep against llama.cpp
 
 Both engines were measured on the same card. llama.cpp build 10358 ran `llama bench` on the
