@@ -287,9 +287,9 @@
                 </fieldset>
 
                 <div class="form-actions">
-                  <div>
+                  <div class="config-actions">
                     <button class="button secondary" type="button" id="reset-config" data-i18n="settings.restore">恢复当前文件</button>
-                    <button class="button primary" type="submit" data-i18n="settings.preview">预览变更</button>
+                    <button class="button primary" type="submit" id="save-config" data-i18n="settings.save">保存配置</button>
                   </div>
                   <div class="service-actions" aria-label="NInfer 服务控制" data-i18n-aria="service.controls">
                     <button class="button start" type="button" id="start-service" disabled data-i18n="service.start">启动 NInfer</button>
@@ -298,15 +298,6 @@
                   </div>
                 </div>
               </form>
-
-              <aside class="diff-inspector">
-                <div class="panel-heading">
-                  <div><h3 data-i18n="settings.changePreview">变更预览</h3><p data-i18n="settings.noAutoRestart">写入不会自动重启服务</p></div>
-                  <span class="quiet-badge" id="revision-badge">REV —</span>
-                </div>
-                <pre id="config-diff" data-i18n="settings.previewHint">调整参数后点击“预览变更”</pre>
-                <button class="button apply" type="button" id="apply-config" disabled data-i18n="settings.writeCompose">写入 compose.yaml</button>
-              </aside>
             </div>
           </section>
         </main>

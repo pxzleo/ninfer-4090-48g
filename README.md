@@ -308,7 +308,7 @@ token counters, and the interactive throughput timeline.*
 ![NInfer Control runtime settings](docs/UI2.png)
 
 *Runtime settings view for the 48 GB profile, including capacity and scheduling, precision and
-generation options, configuration preview, history management, and NInfer service controls.*
+generation options, direct configuration saving, history management, and NInfer service controls.*
 
 ### Live status and history
 
@@ -334,9 +334,9 @@ generation options, configuration preview, history management, and NInfer servic
 ### Configuration and service control
 
 The configuration page edits the supported NInfer options in [`compose.yaml`](compose.yaml),
-validates values, and shows a unified diff before writing. Applying a configuration creates a
+validates values, and saves them directly after confirmation. Saving a configuration creates a
 backup under `ninfer_ui/backups/` and uses a revision check to avoid overwriting an external
-file change. Writing the file does **not** restart NInfer; use the separate start, stop, or
+file change. Saving the file does **not** restart NInfer; use the separate start, stop, or
 restart controls when the new startup configuration should take effect. Stop and restart
 interrupt active and queued inference requests and therefore use a standard confirmation dialog.
 The page also configures Qwen3.8's default reasoning level as Off, Low, Medium, or High. Off maps

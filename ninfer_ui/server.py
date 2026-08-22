@@ -612,13 +612,6 @@ class UiHandler(BaseHTTPRequestHandler):
         try:
             self._require_safe_mutation()
             body = self._read_json()
-            if parsed.path == "/api/config/preview":
-                result = STORE.preview(body.get("config", {}))
-                self._send_json(
-                    HTTPStatus.OK,
-                    {"revision": result.revision, "config": result.config, "diff": result.diff},
-                )
-                return
             if parsed.path == "/api/config/apply":
                 if body.get("confirmation") != "APPLY CONFIG":
                     raise UiError(HTTPStatus.BAD_REQUEST, "确认文本不正确")
@@ -632,7 +625,7 @@ class UiHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "changed": bool(result.diff),
                         "revision": result.revision,
-                        "message": "配置已写入；运行中的服务尚未改变",
+                        "message": "配置已保存；运行中的服务尚未改变",
                     },
                 )
                 return

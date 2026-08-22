@@ -296,13 +296,14 @@ main { padding: clamp(30px, 4vw, 64px); }
 .raw-log { margin-top: 34px; border-top: 1px solid var(--line); }
 .raw-log summary { padding: 18px 0; color: var(--muted); cursor: pointer; font-size: 12px; }
 .raw-log summary span { float: right; color: var(--quiet); font: 9px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-transform: uppercase; }
-.raw-log pre, .diff-inspector pre { margin: 0; overflow: auto; color: #a8b4ad; background: #07090a; font: 10px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.raw-log pre { margin: 0; overflow: auto; color: #a8b4ad; background: #07090a; font: 10px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .raw-log pre { max-height: 420px; padding: 20px; border: 1px solid var(--line); }
 
 .config-state { display: grid; justify-items: end; gap: 5px; }
 .config-state span { color: var(--quiet); font-size: 10px; }
 .config-state code { max-width: 480px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-.settings-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); gap: clamp(38px, 6vw, 84px); padding-top: 26px; border-top: 1px solid var(--line); }
+.settings-layout { padding-top: 26px; border-top: 1px solid var(--line); }
+.settings-form { width: 100%; }
 .settings-form fieldset { margin: 0 0 36px; padding: 0; border: 0; }
 .settings-form legend { width: 100%; margin-bottom: 22px; padding-bottom: 10px; color: var(--text); border-bottom: 1px solid var(--line-soft); font-size: 13px; }
 .field-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 18px; }
@@ -339,22 +340,20 @@ main { padding: clamp(30px, 4vw, 64px); }
 .history-delete-grid .button { min-height: 36px; }
 .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding-top: 24px; border-top: 1px solid var(--line); }
 .form-actions > div { display: flex; gap: 10px; }
+.form-actions .config-actions { align-items: center; }
+.form-actions .config-actions .primary { min-width: 112px; }
 .form-actions .service-actions { justify-content: flex-end; }
 .button { min-height: 38px; padding: 0 15px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; background: transparent; font-size: 11px; transition: transform .16s, color .16s, border-color .16s, background .16s; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
 .button:disabled { opacity: .35; cursor: not-allowed; }
-.button.primary, .button.apply { color: #07110d; border-color: var(--accent); background: var(--accent); }
-.button.primary:hover, .button.apply:hover { background: var(--accent-strong); }
+.button.primary { color: #07110d; border-color: var(--accent); background: var(--accent); }
+.button.primary:hover { background: var(--accent-strong); }
 .button.start { color: var(--accent); border-color: rgba(118,240,189,.42); }
 .button.start:hover { color: #07110d; border-color: var(--accent); background: var(--accent); }
 .button.secondary { color: var(--muted); }
 .button.secondary:hover { color: var(--text); border-color: var(--quiet); }
 .button.danger { color: var(--red); border-color: rgba(255,127,134,.35); }
 .button.danger:hover { background: rgba(255,127,134,.08); border-color: var(--red); }
-.diff-inspector { position: sticky; top: 24px; align-self: start; }
-.diff-inspector pre { min-height: 390px; max-height: 58vh; padding: 18px; border: 1px solid var(--line); white-space: pre-wrap; }
-.diff-inspector .apply { width: 100%; margin-top: 12px; }
-
 dialog { width: min(92vw, 480px); padding: 0; color: var(--text); border: 1px solid #343d38; border-radius: 9px; background: var(--surface-raised); box-shadow: 0 30px 100px rgba(0,0,0,.65); }
 dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
 .confirm-box { padding: 28px; }
@@ -381,8 +380,7 @@ dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
   .primary-readout, .overview-heading { grid-template-columns: 1fr; }
   .overview-totals { grid-template-columns: repeat(3, 1fr); }
   .overview-totals > div:first-child { grid-column: 1; }
-  .operations-grid, .settings-layout { grid-template-columns: 1fr; }
-  .diff-inspector { position: static; }
+  .operations-grid { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
