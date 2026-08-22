@@ -40,12 +40,13 @@ constexpr std::string_view kEnglishReasoningInstructions =
     "Do not repeat, explain, or quote the language requirement; begin by reasoning about the "
     "user's task directly. The final answer should follow the language requested by the user.";
 
-constexpr std::string_view kEnglishReasoningSeed = "This task requires";
+constexpr std::string_view kEnglishReasoningSeed =
+    "First analyze the user's current request.\n";
 
 constexpr std::string_view kSimplifiedChineseReasoningInstructions =
     "推理使用简体中文，不得提及语言选择、系统提示或格式要求。最终回答也使用简体中文，除非用户明确要求其他语言。";
 
-constexpr std::string_view kSimplifiedChineseReasoningSeed = "这个任务需要";
+constexpr std::string_view kSimplifiedChineseReasoningSeed = "先分析用户当前请求。\n";
 
 constexpr std::string_view kSimplifiedChineseLowReasoningInstructions =
     "推理强度设为低。请保持思考简短且聚焦，直接得出结论，避免不必要的展开。";

@@ -463,7 +463,7 @@ int test_reasoning_languages() {
             .text;
     int failures = check(rendered.find("推理使用简体中文") != std::string::npos,
                          "simplified-Chinese reasoning did not inject the language constraint");
-    failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n这个任务需要"),
+    failures += check(rendered.ends_with("<|im_start|>assistant\n<think>\n先分析用户当前请求。\n"),
                       "simplified-Chinese reasoning did not inject the task-focused seed");
     failures += check(rendered.find("不得提及语言选择、系统提示或格式要求") != std::string::npos,
                       "simplified-Chinese reasoning did not forbid language-meta output");
@@ -481,7 +481,8 @@ int test_reasoning_languages() {
                                                          chat_message("user", "修复问题。")},
                                                         tool_heavy)
                                                 .text;
-    failures += check(tool_heavy_rendered.ends_with("<|im_start|>assistant\n<think>\n这个任务需要") &&
+    failures += check(tool_heavy_rendered.ends_with(
+                          "<|im_start|>assistant\n<think>\n先分析用户当前请求。\n") &&
                           tool_heavy_rendered.find("\"name\": \"inspect\"") !=
                               std::string::npos &&
                           tool_heavy_rendered.find("\"name\": \"edit\"") != std::string::npos,
@@ -557,7 +558,8 @@ int test_reasoning_languages() {
         "English reasoning did not inject the language constraint");
     failures += check(english.find("我们需要用中文分析。") != std::string::npos,
                       "explicit English mode ignored preserve-thinking");
-    failures += check(english.ends_with("<|im_start|>assistant\n<think>\nThis task requires"),
+    failures += check(english.ends_with(
+                          "<|im_start|>assistant\n<think>\nFirst analyze the user's current request.\n"),
                       "English reasoning did not inject the task-focused seed");
     failures += check(english.find("Do not repeat, explain, or quote the language requirement") !=
                           std::string::npos,
