@@ -173,12 +173,13 @@ process.stdout.write(JSON.stringify([
         )
         self.assertIn('id="confirm-phrase-row"', html)
 
-    def test_service_stop_and_restart_use_plain_confirmation(self):
+    def test_config_apply_and_service_controls_use_plain_confirmation(self):
         script = f"""
-const {{confirmationState, serviceConfirmationOptions}} = require({json.dumps(str(APP_JS))});
+const {{configApplyConfirmationOptions, confirmationState, serviceConfirmationOptions}} = require({json.dumps(str(APP_JS))});
 process.stdout.write(JSON.stringify({{
   empty: confirmationState(""),
   typed: confirmationState("DELETE HISTORY"),
+  apply: configApplyConfirmationOptions(),
   restart: serviceConfirmationOptions("restart"),
   stop: serviceConfirmationOptions("stop"),
 }}));
@@ -195,8 +196,10 @@ process.stdout.write(JSON.stringify({{
             states["typed"],
             {"phraseRequired": True, "inputHidden": False, "confirmDisabled": True},
         )
+        self.assertEqual(states["apply"]["confirmation"], "APPLY CONFIG")
         self.assertEqual(states["restart"]["confirmation"], "RESTART NINFER")
         self.assertEqual(states["stop"]["confirmation"], "STOP NINFER")
+        self.assertNotIn("phrase", states["apply"])
         self.assertNotIn("phrase", states["restart"])
         self.assertNotIn("phrase", states["stop"])
 

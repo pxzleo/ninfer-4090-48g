@@ -1020,6 +1020,15 @@ function serviceConfirmationOptions(action) {
   throw new Error(`Unsupported service confirmation action: ${action}`);
 }
 
+function configApplyConfirmationOptions() {
+  return {
+    titleKey: "settings.applyTitle",
+    messageKey: "settings.applyMessage",
+    buttonKey: "settings.applyButton",
+    confirmation: "APPLY CONFIG",
+  };
+}
+
 function renderConfirmContext() {
   const context = state.confirmContext;
   if (!context) return;
@@ -1056,12 +1065,8 @@ function confirmAction({
 
 async function applyConfig() {
   if (!state.preview?.diff) return;
-  const confirmed = await confirmAction({
-    titleKey: "settings.applyTitle",
-    messageKey: "settings.applyMessage",
-    phrase: "APPLY CONFIG",
-    buttonKey: "settings.applyButton",
-  });
+  const action = configApplyConfirmationOptions();
+  const confirmed = await confirmAction(action);
   if (!confirmed) return;
   try {
     const data = await api("/api/config/apply", {
@@ -1069,7 +1074,7 @@ async function applyConfig() {
       body: JSON.stringify({
         config: state.preview.config,
         revision: state.preview.revision,
-        confirmation: "APPLY CONFIG",
+        confirmation: action.confirmation,
       }),
     });
     toast(t("settings.applied"));
@@ -1337,6 +1342,7 @@ if (typeof module !== "undefined") {
     I18N,
     calculateSlotDecodeRates,
     chartGeometry,
+    configApplyConfirmationOptions,
     confirmationState,
     historyAxisTicks,
     historyDeleteRange,
