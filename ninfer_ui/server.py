@@ -81,6 +81,7 @@ STORE = ComposeStore(COMPOSE_PATH, BACKUP_DIR)
 CACHE = SnapshotCache()
 HISTORY = HistoryStore(HISTORY_PATH)
 MUTATION_LOCK = threading.Lock()
+REQUEST_BACKFILL_COMPLETE = False
 
 
 def fetch_text(path: str, timeout: float = 1.5) -> str:
@@ -160,7 +161,7 @@ def docker_command(args: list[str], timeout: float = 8.0) -> subprocess.Complete
 
 
 def docker_logs(tail: int = 100) -> list[str]:
-    tail = max(1, min(tail, 500))
+    tail = max(1, min(tail, 5_000))
     result = docker_command(
         ["logs", "--timestamps", "--tail", str(tail), CONTAINER_NAME], timeout=8.0
     )
@@ -359,6 +360,7 @@ def reconcile_slot_kv_usage(metrics: dict[str, float], slots: Any) -> None:
 
 
 def collect_snapshot() -> dict[str, Any]:
+    global REQUEST_BACKFILL_COMPLETE
     result: dict[str, Any] = {
         "timestamp_ms": int(time.time() * 1000),
         "target": NINFER_BASE,
@@ -384,9 +386,11 @@ def collect_snapshot() -> dict[str, Any]:
         result["errors"].append(f"NInfer: {exc}")
 
     try:
-        lines = docker_logs(500)
+        backfill = not REQUEST_BACKFILL_COMPLETE
+        lines = docker_logs(5_000 if backfill else 500)
         result["throughput"] = latest_throughput(lines)
         HISTORY.record_completed_requests(request_events(lines, limit=50))
+        REQUEST_BACKFILL_COMPLETE = True
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         result["errors"].append(f"Docker logs: {exc}")
     except (ValueError, sqlite3.Error) as exc:

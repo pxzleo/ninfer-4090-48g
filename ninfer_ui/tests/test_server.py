@@ -13,6 +13,9 @@ from server import host_name, lan_api_url, latest_throughput, request_events  # 
 
 
 class RequestEventsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        server_module.REQUEST_BACKFILL_COMPLETE = False
+
     @patch.object(server_module, "LAN_API_OVERRIDE", "http://192.168.100.149:8080/v1")
     def test_lan_api_override_is_used_verbatim(self) -> None:
         self.assertEqual(lan_api_url(), "http://192.168.100.149:8080/v1")
