@@ -11,6 +11,19 @@ APP_HTML = Path(__file__).parents[1] / "static" / "index.html"
 
 
 class SlotStageTest(unittest.TestCase):
+    def test_request_rows_open_an_accessible_detail_dialog(self):
+        html = APP_HTML.read_text(encoding="utf-8")
+        javascript = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn('id="request-detail-dialog"', html)
+        self.assertIn('aria-labelledby="request-detail-title"', html)
+        self.assertIn('row.tabIndex = 0', javascript)
+        self.assertIn(
+            'keyboardEvent.key === "Enter" || keyboardEvent.key === " "', javascript
+        )
+        self.assertIn("showRequestDetails", javascript)
+        self.assertNotIn('request-detail-content").innerHTML', javascript)
+
     def test_lan_api_address_uses_ui_hostname_and_target_port(self):
         script = f"""
 const {{lanApiAddress}} = require({json.dumps(str(APP_JS))});

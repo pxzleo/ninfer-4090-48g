@@ -339,6 +339,8 @@ generation options, direct configuration saving, history management, and NInfer 
 - Persists and displays the latest 50 completed requests with input/output tokens, cache hit rate,
   TTFT, decode rate, wall time, finish reason, and speculative-decoding statistics. The list
   survives UI restarts and no longer shrinks as throughput lines roll through Docker's log tail.
+  Each row opens a keyboard-accessible request inspector with completion time, prefill and decode
+  performance, cache details, MTP statistics, and the exact source log record.
 - Provides raw Docker logs with two-second auto-refresh and automatic scrolling to the latest
   line.
 - Plots live, calendar-day, calendar-week, and calendar-month throughput. Hover over a curve,

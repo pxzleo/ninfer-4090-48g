@@ -317,6 +317,40 @@
       </form>
     </dialog>
 
+    <dialog id="request-detail-dialog" class="request-detail-dialog" aria-labelledby="request-detail-title" aria-describedby="request-detail-subtitle">
+      <form method="dialog" class="request-detail-page">
+        <header class="request-detail-header">
+          <div>
+            <p class="section-kicker" data-i18n="requestDetail.kicker">REQUEST INSPECTOR</p>
+            <h2 id="request-detail-title">—</h2>
+            <p id="request-detail-subtitle">—</p>
+          </div>
+          <button class="request-detail-close" value="close" data-i18n-aria="requestDetail.close" aria-label="关闭详情">×</button>
+        </header>
+        <div class="request-detail-hero">
+          <div><span data-i18n="requests.input">输入</span><strong id="request-detail-input">—</strong><small>tokens</small></div>
+          <div><span data-i18n="requests.output">输出</span><strong id="request-detail-output">—</strong><small>tokens</small></div>
+          <div><span data-i18n="requests.cacheHit">缓存命中</span><strong id="request-detail-cache-rate">—</strong><small id="request-detail-cache-tokens">—</small></div>
+          <div><span data-i18n="requests.duration">耗时</span><strong id="request-detail-wall">—</strong><small data-i18n="requestDetail.wallTime">端到端</small></div>
+        </div>
+        <div class="request-detail-grid">
+          <div><span data-i18n="requestDetail.completedAt">完成时间</span><strong id="request-detail-time">—</strong></div>
+          <div><span data-i18n="requests.finish">结束原因</span><strong id="request-detail-finish">—</strong></div>
+          <div><span>TTFT</span><strong id="request-detail-ttft">—</strong></div>
+          <div><span data-i18n="metric.prefill">预填充</span><strong id="request-detail-prefill">—</strong></div>
+          <div><span data-i18n="metric.decode">解码</span><strong id="request-detail-decode">—</strong></div>
+          <div><span data-i18n="requestDetail.speculative">推测解码</span><strong id="request-detail-speculative">—</strong></div>
+        </div>
+        <section class="request-detail-log" aria-labelledby="request-detail-log-title">
+          <div>
+            <h3 id="request-detail-log-title" data-i18n="requestDetail.rawRecord">原始完成记录</h3>
+            <span data-i18n="requestDetail.rawHint">用于精确排障与核对</span>
+          </div>
+          <pre id="request-detail-line">—</pre>
+        </section>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </body>
 </html>

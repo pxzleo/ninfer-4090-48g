@@ -46,7 +46,7 @@ THROUGHPUT_RE = re.compile(
 REQUEST_DONE_RE = re.compile(
     r"\[req (?P<id>\d+)] done finish=(?P<finish>\S+).*?prompt=(?P<prompt>\d+) "
     r"gen=(?P<gen>\d+) cache=(?P<cache>\d+).*?ttft=(?P<ttft>[0-9]+)ms "
-    r".*?decode=(?P<decode>[^ ]+) "
+    r".*?prefill=(?P<prefill>[^ ]+) decode=(?P<decode>[^ ]+) "
     r"wall=(?P<wall>[^ ]+).*?speculative=(?P<spec>.+)$"
 )
 
@@ -335,6 +335,7 @@ def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
                 if prompt_tokens > 0
                 else 0.0,
                 "ttft_ms": int(values["ttft"]),
+                "prefill": values["prefill"],
                 "decode": values["decode"],
                 "wall": values["wall"],
                 "speculative": values["spec"],
