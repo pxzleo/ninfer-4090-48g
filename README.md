@@ -336,8 +336,9 @@ generation options, direct configuration saving, history management, and NInfer 
   resolved shared KV capacity.
 - Reports GPU utilization, VRAM, temperature, power, and SM clock, followed by the LAN API
   address derived from the current UI hostname and the model name reported by `/v1/models`.
-- Lists recent requests with input/output tokens, cache hit rate, TTFT, decode rate, wall time,
-  finish reason, and speculative-decoding statistics.
+- Persists and displays the latest 50 completed requests with input/output tokens, cache hit rate,
+  TTFT, decode rate, wall time, finish reason, and speculative-decoding statistics. The list
+  survives UI restarts and no longer shrinks as throughput lines roll through Docker's log tail.
 - Provides raw Docker logs with two-second auto-refresh and automatic scrolling to the latest
   line.
 - Plots live, calendar-day, calendar-week, and calendar-month throughput. Hover over a curve,

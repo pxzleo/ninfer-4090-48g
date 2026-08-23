@@ -384,11 +384,17 @@ def collect_snapshot() -> dict[str, Any]:
         result["errors"].append(f"NInfer: {exc}")
 
     try:
-        lines = docker_logs(160)
+        lines = docker_logs(500)
         result["throughput"] = latest_throughput(lines)
-        result["recent_requests"] = request_events(lines)
+        HISTORY.record_completed_requests(request_events(lines, limit=50))
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         result["errors"].append(f"Docker logs: {exc}")
+    except (ValueError, sqlite3.Error) as exc:
+        result["errors"].append(f"Completed requests: {exc}")
+    try:
+        result["recent_requests"] = HISTORY.recent_completed_requests()
+    except (ValueError, sqlite3.Error) as exc:
+        result["errors"].append(f"Completed requests: {exc}")
     result["timestamp_ms"] = int(time.time() * 1000)
     result["throughput"] = current_throughput(
         result["throughput"], result["timestamp_ms"]

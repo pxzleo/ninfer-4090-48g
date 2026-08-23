@@ -34,6 +34,36 @@ def local_timezone(name: str):
 
 
 class HistoryStoreTest(unittest.TestCase):
+    def test_completed_requests_keep_latest_fifty_and_survive_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.sqlite3"
+            store = HistoryStore(path)
+            events = [
+                {
+                    "id": request_id,
+                    "finish": "stop_token",
+                    "prompt_tokens": request_id + 10,
+                    "completion_tokens": request_id + 20,
+                    "cache_tokens": request_id,
+                    "cache_hit_rate": 1.5,
+                    "ttft_ms": 100,
+                    "decode": "80.0tok/s",
+                    "wall": "1.00s",
+                    "speculative": "mtp 2.00tok/round (50.0%)",
+                    "line": f"unique completed request {request_id}",
+                }
+                for request_id in range(1, 52)
+            ]
+
+            store.record_completed_requests(list(reversed(events)))
+            store.record_completed_requests(list(reversed(events[-3:])))
+            reopened = HistoryStore(path)
+            recent = reopened.recent_completed_requests()
+
+            self.assertEqual(len(recent), 50)
+            self.assertEqual(recent[0]["id"], 51)
+            self.assertEqual(recent[-1]["id"], 2)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.store = HistoryStore(Path(self.temporary.name) / "history.sqlite3")

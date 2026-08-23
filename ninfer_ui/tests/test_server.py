@@ -84,6 +84,40 @@ class RequestEventsTest(unittest.TestCase):
         self.assertEqual(events[0]["cache_tokens"], 43358)
         self.assertAlmostEqual(events[0]["cache_hit_rate"], 88.4496, places=3)
 
+    def test_request_event_parser_accepts_fifty_rows(self) -> None:
+        lines = [
+            f"[req {request_id}] done finish=stop_token prompt=10 gen=2 cache=0 "
+            "reuse=full_reset ttft=10ms prefill=10.0tok/s decode=20.0tok/s "
+            "wall=1.00s speculative=mtp 2.00tok/round (50.0%)"
+            for request_id in range(1, 56)
+        ]
+
+        events = request_events(lines, limit=50)
+
+        self.assertEqual(len(events), 50)
+        self.assertEqual(events[0]["id"], 55)
+        self.assertEqual(events[-1]["id"], 6)
+
+    @patch.object(server_module, "gpu_state", return_value={"available": True})
+    @patch.object(server_module, "container_state", return_value={"running": True})
+    @patch.object(server_module, "fetch_text", return_value="")
+    @patch.object(
+        server_module,
+        "fetch_json",
+        side_effect=[{"status": "ok"}, [], {"data": []}],
+    )
+    @patch.object(server_module, "docker_logs", side_effect=RuntimeError("unavailable"))
+    @patch.object(server_module, "HISTORY")
+    def test_snapshot_keeps_persisted_requests_when_logs_are_unavailable(
+        self, history, _logs, _fetch_json, _fetch_text, _container, _gpu
+    ) -> None:
+        history.recent_completed_requests.return_value = [{"id": 42}]
+
+        snapshot = server_module.collect_snapshot()
+
+        self.assertEqual(snapshot["recent_requests"], [{"id": 42}])
+        self.assertTrue(any("Docker logs" in error for error in snapshot["errors"]))
+
     @patch.object(server_module, "gpu_state", return_value={"available": True})
     @patch.object(server_module, "container_state", return_value={"running": True})
     @patch.object(server_module, "fetch_text", return_value="")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import date, datetime, time, timedelta
@@ -14,6 +15,7 @@ RANGES = {
     "month": {"bucket_ms": 2 * 60 * 60_000, "label": "自然月 · 2小时峰值保真"},
 }
 AGGREGATE_RETENTION_MS = 400 * 24 * 60 * 60_000
+COMPLETED_REQUEST_LIMIT = 50
 
 
 def _calendar_range(period: str, anchor_ms: int) -> tuple[int, int, str]:
@@ -100,6 +102,15 @@ class HistoryStore:
                     )
                     """
                 )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS completed_requests (
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_line TEXT NOT NULL UNIQUE,
+                        payload_json TEXT NOT NULL
+                    )
+                    """
+                )
                 columns = {
                     row[1]
                     for row in connection.execute("PRAGMA table_info(throughput_minute)")
@@ -128,6 +139,55 @@ class HistoryStore:
                 connection.commit()
                 self._schema_ready = True
         return connection
+
+    def record_completed_requests(self, events: list[dict[str, Any]]) -> None:
+        rows: list[tuple[str, str]] = []
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                raise ValueError("完成请求记录必须是对象")
+            source_line = event.get("line")
+            if not isinstance(source_line, str) or not source_line:
+                raise ValueError("完成请求记录缺少原始日志")
+            rows.append(
+                (
+                    source_line,
+                    json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+                )
+            )
+        if not rows:
+            return
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT OR IGNORE INTO completed_requests (source_line, payload_json) VALUES (?, ?)",
+                rows,
+            )
+            connection.execute(
+                """
+                DELETE FROM completed_requests
+                WHERE sequence NOT IN (
+                    SELECT sequence FROM completed_requests
+                    ORDER BY sequence DESC LIMIT ?
+                )
+                """,
+                (COMPLETED_REQUEST_LIMIT,),
+            )
+
+    def recent_completed_requests(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM completed_requests
+                ORDER BY sequence DESC LIMIT ?
+                """,
+                (COMPLETED_REQUEST_LIMIT,),
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for (payload_json,) in rows:
+            payload = json.loads(payload_json)
+            if not isinstance(payload, dict):
+                raise ValueError("完成请求数据库包含无效记录")
+            events.append(payload)
+        return events
 
     def record(self, timestamp_ms: int, decode_rate: float, prefill_rate: float) -> None:
         if timestamp_ms <= 0:
