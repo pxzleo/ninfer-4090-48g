@@ -50,11 +50,13 @@ class HistoryStoreTest(unittest.TestCase):
                     "decode": "80.0tok/s",
                     "wall": "1.00s",
                     "speculative": "mtp 2.00tok/round (50.0%)",
+                    "timestamp_ms": request_id * 1000,
                     "line": f"unique completed request {request_id}",
                 }
                 for request_id in range(1, 52)
             ]
 
+            store.record_completed_requests(list(reversed(events[-24:])))
             store.record_completed_requests(list(reversed(events)))
             store.record_completed_requests(list(reversed(events[-3:])))
             reopened = HistoryStore(path)

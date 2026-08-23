@@ -221,24 +221,27 @@ def gpu_state() -> dict[str, Any]:
         return {"available": False, "error": "nvidia-smi 包含非数值字段"}
 
 
+def docker_timestamp_ms(line: str) -> int:
+    try:
+        timestamp_text = line.split(" ", 1)[0]
+        if timestamp_text.endswith("Z") and "." in timestamp_text:
+            prefix, fraction = timestamp_text[:-1].split(".", 1)
+            timestamp_text = f"{prefix}.{fraction[:6]}+00:00"
+        else:
+            timestamp_text = timestamp_text.replace("Z", "+00:00")
+        return int(datetime.fromisoformat(timestamp_text).timestamp() * 1000)
+    except (ValueError, OverflowError):
+        return 0
+
+
 def latest_throughput(lines: list[str]) -> dict[str, Any] | None:
     for line in reversed(lines):
         match = THROUGHPUT_RE.search(line)
         if not match:
             continue
         values = match.groupdict()
-        try:
-            timestamp_text = line.split(" ", 1)[0]
-            if timestamp_text.endswith("Z") and "." in timestamp_text:
-                prefix, fraction = timestamp_text[:-1].split(".", 1)
-                timestamp_text = f"{prefix}.{fraction[:6]}+00:00"
-            else:
-                timestamp_text = timestamp_text.replace("Z", "+00:00")
-            timestamp_ms = int(datetime.fromisoformat(timestamp_text).timestamp() * 1000)
-        except (ValueError, OverflowError):
-            timestamp_ms = 0
         return {
-            "timestamp_ms": timestamp_ms,
+            "timestamp_ms": docker_timestamp_ms(line),
             "interval_seconds": float(values["interval"]),
             "prefill_tokens_per_second": float(values["prefill"]),
             "decode_tokens_per_second": float(values["decode"]),
@@ -335,6 +338,7 @@ def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
                 "decode": values["decode"],
                 "wall": values["wall"],
                 "speculative": values["spec"],
+                "timestamp_ms": docker_timestamp_ms(line),
                 "line": line,
             }
         )

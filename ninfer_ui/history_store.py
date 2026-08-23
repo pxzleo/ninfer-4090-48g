@@ -107,10 +107,20 @@ class HistoryStore:
                     CREATE TABLE IF NOT EXISTS completed_requests (
                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                         source_line TEXT NOT NULL UNIQUE,
+                        event_timestamp_ms INTEGER NOT NULL DEFAULT 0,
                         payload_json TEXT NOT NULL
                     )
                     """
                 )
+                request_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(completed_requests)")
+                }
+                if "event_timestamp_ms" not in request_columns:
+                    connection.execute(
+                        "ALTER TABLE completed_requests ADD COLUMN "
+                        "event_timestamp_ms INTEGER NOT NULL DEFAULT 0"
+                    )
                 columns = {
                     row[1]
                     for row in connection.execute("PRAGMA table_info(throughput_minute)")
@@ -141,7 +151,7 @@ class HistoryStore:
         return connection
 
     def record_completed_requests(self, events: list[dict[str, Any]]) -> None:
-        rows: list[tuple[str, str]] = []
+        rows: list[tuple[str, int, str]] = []
         for event in reversed(events):
             if not isinstance(event, dict):
                 raise ValueError("完成请求记录必须是对象")
@@ -151,6 +161,7 @@ class HistoryStore:
             rows.append(
                 (
                     source_line,
+                    int(event.get("timestamp_ms", 0)),
                     json.dumps(event, ensure_ascii=False, separators=(",", ":")),
                 )
             )
@@ -158,7 +169,14 @@ class HistoryStore:
             return
         with self._connect() as connection:
             connection.executemany(
-                "INSERT OR IGNORE INTO completed_requests (source_line, payload_json) VALUES (?, ?)",
+                """
+                INSERT INTO completed_requests (
+                    source_line, event_timestamp_ms, payload_json
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(source_line) DO UPDATE SET
+                    event_timestamp_ms = excluded.event_timestamp_ms,
+                    payload_json = excluded.payload_json
+                """,
                 rows,
             )
             connection.execute(
@@ -166,7 +184,7 @@ class HistoryStore:
                 DELETE FROM completed_requests
                 WHERE sequence NOT IN (
                     SELECT sequence FROM completed_requests
-                    ORDER BY sequence DESC LIMIT ?
+                    ORDER BY event_timestamp_ms DESC, sequence DESC LIMIT ?
                 )
                 """,
                 (COMPLETED_REQUEST_LIMIT,),
@@ -177,7 +195,7 @@ class HistoryStore:
             rows = connection.execute(
                 """
                 SELECT payload_json FROM completed_requests
-                ORDER BY sequence DESC LIMIT ?
+                ORDER BY event_timestamp_ms DESC, sequence DESC LIMIT ?
                 """,
                 (COMPLETED_REQUEST_LIMIT,),
             ).fetchall()

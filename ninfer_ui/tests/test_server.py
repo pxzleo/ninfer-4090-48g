@@ -76,7 +76,8 @@ class RequestEventsTest(unittest.TestCase):
 
     def test_parses_cache_tokens_and_hit_rate(self) -> None:
         line = (
-            "[req 9] done finish=tool_calls tool_calls=3 prompt=49020 gen=5370 "
+            "2026-08-19T08:07:57.371626300Z [req 9] done finish=tool_calls "
+            "tool_calls=3 prompt=49020 gen=5370 "
             "cache=43358 reuse=append_frontier ttft=8980ms prefill=1563.4tok/s "
             "decode=79.3tok/s wall=76.84s speculative=mtp 2.14tok/round (38.0%)"
         )
@@ -86,6 +87,7 @@ class RequestEventsTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["cache_tokens"], 43358)
         self.assertAlmostEqual(events[0]["cache_hit_rate"], 88.4496, places=3)
+        self.assertEqual(events[0]["timestamp_ms"], 1787126877371)
 
     def test_request_event_parser_accepts_fifty_rows(self) -> None:
         lines = [
