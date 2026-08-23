@@ -104,6 +104,24 @@ class RequestEventsTest(unittest.TestCase):
         self.assertEqual(events[0]["id"], 55)
         self.assertEqual(events[-1]["id"], 6)
 
+    def test_request_event_parser_extracts_client_metadata(self) -> None:
+        line = (
+            '2026-08-23T10:20:30.000Z [req 21] done finish=stop prompt=100 gen=20 '
+            'cache=50 reuse=exact ttft=100ms prefill=10.0tok/s decode=20.0tok/s '
+            'wall=2.00s speculative=off client_ip="192.168.100.42" client_port=54321 '
+            'client_id="opencode-xupc" agent_id="writer 1" session_id="story" '
+            'user_agent="OpenCode/1.2 \\"quoted\\" test"'
+        )
+
+        event = request_events([line], limit=50)[0]
+
+        self.assertEqual(event["client_ip"], "192.168.100.42")
+        self.assertEqual(event["client_port"], 54321)
+        self.assertEqual(event["client_id"], "opencode-xupc")
+        self.assertEqual(event["agent_id"], "writer 1")
+        self.assertEqual(event["session_id"], "story")
+        self.assertEqual(event["user_agent"], 'OpenCode/1.2 "quoted" test')
+
     @patch.object(server_module, "gpu_state", return_value={"available": True})
     @patch.object(server_module, "container_state", return_value={"running": True})
     @patch.object(server_module, "fetch_text", return_value="")

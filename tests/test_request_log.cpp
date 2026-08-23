@@ -192,8 +192,16 @@ int main() {
     prepared.sampling.frequency_penalty        = 0.0F;
     prepared.sampling.seed                     = 7632647173703958409ULL;
 
-    const RequestLogContext context =
+    RequestLogContext context =
         make_request_log_context(7, "openai_chat_completions", request, prepared);
+    context.client = make_request_client_info("192.168.100.42", 54321, "OpenCode/1.2 test",
+                                              "opencode-xupc", "writer-1", "story-session");
+    const RequestClientInfo sanitized = make_request_client_info(
+        "127.0.0.1\n", 80, std::string(300, 'u'), "client\r-id", "agent\x7f-id", "session");
+    failures += check(sanitized.remote_address == "127.0.0.1" &&
+                          sanitized.user_agent.size() == 256 &&
+                          sanitized.client_id == "client-id" && sanitized.agent_id == "agent-id",
+                      "client metadata is not bounded and sanitized");
     const Json started = Json::parse(format_request_start_json("serve-test", 2000, context));
     failures +=
         check(started.at("request").at("request_id") == 7, "request id missing from start record");
@@ -206,6 +214,10 @@ int main() {
                       "resolved preserve-thinking metadata missing");
     failures += check(started.at("request").at("sampling").at("seed") == 7632647173703958409ULL,
                       "resolved seed missing");
+    failures += check(started.at("request").at("client").at("remote_address") ==
+                          "192.168.100.42" &&
+                          started.at("request").at("client").at("agent_id") == "writer-1",
+                      "request client metadata missing");
 
     GenerationOutcome outcome;
     outcome.prompt_tokens                       = 401;
@@ -264,6 +276,11 @@ int main() {
     failures += check(format_request_done(context, outcome).find("reuse=restore_turn_checkpoint") !=
                           std::string::npos,
                       "human request log omits prefix reuse path");
+    failures += check(format_request_done(context, outcome).find(
+                          "client_ip=\"192.168.100.42\" client_port=54321") != std::string::npos &&
+                          format_request_done(context, outcome).find(
+                              "user_agent=\"OpenCode/1.2 test\"") != std::string::npos,
+                      "human request log omits client metadata");
     failures += check(format_request_start(context).find("submitted") != std::string::npos,
                       "human request log mislabels a submitted request");
 

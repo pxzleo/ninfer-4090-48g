@@ -340,7 +340,9 @@ generation options, direct configuration saving, history management, and NInfer 
   TTFT, decode rate, wall time, finish reason, and speculative-decoding statistics. The list
   survives UI restarts and no longer shrinks as throughput lines roll through Docker's log tail.
   Each row opens a keyboard-accessible request inspector with completion time, prefill and decode
-  performance, cache details, MTP statistics, and the exact source log record.
+  performance, cache details, MTP statistics, the socket peer address, User-Agent, optional
+  `X-NInfer-Client` / `X-NInfer-Agent` / `X-NInfer-Session` identifiers, and the exact source log
+  record. API keys and `X-Forwarded-For` are never recorded.
 - Provides raw Docker logs with two-second auto-refresh and automatic scrolling to the latest
   line.
 - Plots live, calendar-day, calendar-week, and calendar-month throughput. Hover over a curve,

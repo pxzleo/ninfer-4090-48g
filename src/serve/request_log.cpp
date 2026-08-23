@@ -26,6 +26,15 @@ namespace {
 
 using Json = nlohmann::json;
 
+std::string safe_client_metadata(std::string value, std::size_t max_bytes) {
+    value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char character) {
+                    return character < 0x20 || character > 0x7e;
+                }),
+                value.end());
+    if (value.size() > max_bytes) { value.resize(max_bytes); }
+    return value;
+}
+
 std::uint64_t unix_time_ms() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(
@@ -197,6 +206,13 @@ Json request_json(const RequestLogContext& context) {
                 {"enable_thinking", context.enable_thinking},
                 {"preserve_thinking", context.preserve_thinking},
                 {"preserve_thinking_semantic_change", context.preserve_thinking_semantic_change},
+                {"client",
+                 {{"remote_address", context.client.remote_address},
+                  {"remote_port", context.client.remote_port},
+                  {"user_agent", context.client.user_agent},
+                  {"client_id", context.client.client_id},
+                  {"agent_id", context.client.agent_id},
+                  {"session_id", context.client.session_id}}},
                 {"sampling", sampler_json(context.sampling)}};
 }
 
@@ -268,6 +284,19 @@ std::string speculative_str(const GenerationMetrics& metrics) {
 
 } // namespace
 
+RequestClientInfo make_request_client_info(std::string remote_address, int remote_port,
+                                           std::string user_agent, std::string client_id,
+                                           std::string agent_id, std::string session_id) {
+    RequestClientInfo info;
+    info.remote_address = safe_client_metadata(std::move(remote_address), 128);
+    info.remote_port    = remote_port;
+    info.user_agent     = safe_client_metadata(std::move(user_agent), 256);
+    info.client_id      = safe_client_metadata(std::move(client_id), 128);
+    info.agent_id       = safe_client_metadata(std::move(agent_id), 128);
+    info.session_id     = safe_client_metadata(std::move(session_id), 128);
+    return info;
+}
+
 RequestLogContext make_request_log_context(std::uint64_t id, std::string protocol,
                                            const GenerationRequest& request,
                                            const PreparedRequest& prepared) {
@@ -327,7 +356,13 @@ std::string format_request_done(const RequestLogContext& context,
         << " prefill=" << rate(computed_prefill_tokens, metrics.prefill_seconds)
         << " decode=" << rate(decode_tokens, metrics.decode_seconds)
         << " wall=" << seconds_str(metrics.total_seconds)
-        << " speculative=" << speculative_str(metrics);
+        << " speculative=" << speculative_str(metrics)
+        << " client_ip=" << std::quoted(context.client.remote_address)
+        << " client_port=" << context.client.remote_port
+        << " client_id=" << std::quoted(context.client.client_id)
+        << " agent_id=" << std::quoted(context.client.agent_id)
+        << " session_id=" << std::quoted(context.client.session_id)
+        << " user_agent=" << std::quoted(context.client.user_agent);
     return out.str();
 }
 

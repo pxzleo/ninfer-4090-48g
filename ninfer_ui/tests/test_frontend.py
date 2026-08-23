@@ -16,6 +16,8 @@ class SlotStageTest(unittest.TestCase):
         javascript = APP_JS.read_text(encoding="utf-8")
 
         self.assertIn('id="request-detail-dialog"', html)
+        self.assertIn('id="request-detail-client-address"', html)
+        self.assertIn('id="request-detail-agent-id"', html)
         self.assertIn('aria-labelledby="request-detail-title"', html)
         self.assertIn('row.tabIndex = 0', javascript)
         self.assertIn(
@@ -23,6 +25,7 @@ class SlotStageTest(unittest.TestCase):
         )
         self.assertIn("showRequestDetails", javascript)
         self.assertNotIn('request-detail-content").innerHTML', javascript)
+        self.assertIn('$("#request-detail-user-agent").textContent', javascript)
 
     def test_lan_api_address_uses_ui_hostname_and_target_port(self):
         script = f"""

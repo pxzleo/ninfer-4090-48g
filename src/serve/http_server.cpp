@@ -132,6 +132,13 @@ std::string_view unstreamed_content(const GenerationOutcome& outcome) {
 
 } // namespace
 
+RequestClientInfo HttpServer::request_client_info(const httplib::Request& req) const {
+    return make_request_client_info(
+        req.remote_addr, req.remote_port, req.get_header_value("User-Agent"),
+        req.get_header_value("X-NInfer-Client"), req.get_header_value("X-NInfer-Agent"),
+        req.get_header_value("X-NInfer-Session"));
+}
+
 HttpServer::HttpServer(ServeOptions options)
     : options_(std::move(options)),
       response_store_(options_.response_store_max_records, options_.response_store_max_bytes),
@@ -570,8 +577,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
     const std::string model    = request.model;
 
     const std::uint64_t req_id = ++request_seq_;
-    const RequestLogContext log_context =
+    RequestLogContext log_context =
         make_request_log_context(req_id, "openai_chat_completions", request, prepared);
+    log_context.client = request_client_info(req);
     log_request_start(log_context);
 
     if (!request.stream) {
@@ -766,8 +774,9 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
     const int input_tokens  = prepared.prompt_tokens;
 
     const std::uint64_t req_id = ++request_seq_;
-    const RequestLogContext log_context =
+    RequestLogContext log_context =
         make_request_log_context(req_id, "anthropic_messages", request, prepared);
+    log_context.client = request_client_info(req);
     log_request_start(log_context);
 
     if (!request.stream) {

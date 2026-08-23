@@ -17,8 +17,17 @@
 
 namespace ninfer::serve {
 
-inline constexpr int kRequestLogSchemaVersion        = 8;
+inline constexpr int kRequestLogSchemaVersion        = 9;
 inline constexpr const char* kRequestLogArtifactType = "ninfer_serve_request_log";
+
+struct RequestClientInfo {
+    std::string remote_address;
+    int remote_port = -1;
+    std::string user_agent;
+    std::string client_id;
+    std::string agent_id;
+    std::string session_id;
+};
 
 struct RequestLogContext {
     std::uint64_t id = 0;
@@ -35,8 +44,13 @@ struct RequestLogContext {
     bool enable_thinking                   = true;
     bool preserve_thinking                 = false;
     bool preserve_thinking_semantic_change = false;
+    RequestClientInfo client;
     ninfer::ResolvedSamplingParameters sampling;
 };
+
+RequestClientInfo make_request_client_info(std::string remote_address, int remote_port,
+                                           std::string user_agent, std::string client_id,
+                                           std::string agent_id, std::string session_id);
 
 struct ServerLogEnvironment {
     int device = 0;

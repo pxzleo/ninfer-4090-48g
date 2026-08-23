@@ -318,10 +318,24 @@ class HistorySampler:
 def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in reversed(lines):
-        match = REQUEST_DONE_RE.search(line)
+        request_line, separator, client_suffix = line.partition(" client_ip=")
+        match = REQUEST_DONE_RE.search(request_line)
         if not match:
             continue
         values = match.groupdict()
+        client: dict[str, str] = {}
+        if separator:
+            try:
+                for item in shlex.split(f"client_ip={client_suffix}"):
+                    key, delimiter, value = item.partition("=")
+                    if delimiter:
+                        client[key] = value
+            except ValueError:
+                client = {}
+        try:
+            client_port = int(client.get("client_port", "-1"))
+        except ValueError:
+            client_port = -1
         prompt_tokens = int(values["prompt"])
         cache_tokens = int(values["cache"])
         events.append(
@@ -339,6 +353,12 @@ def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
                 "decode": values["decode"],
                 "wall": values["wall"],
                 "speculative": values["spec"],
+                "client_ip": client.get("client_ip", ""),
+                "client_port": client_port,
+                "client_id": client.get("client_id", ""),
+                "agent_id": client.get("agent_id", ""),
+                "session_id": client.get("session_id", ""),
+                "user_agent": client.get("user_agent", ""),
                 "timestamp_ms": docker_timestamp_ms(line),
                 "line": line,
             }

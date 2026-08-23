@@ -234,8 +234,9 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
     const std::string id       = new_response_id();
     const std::int64_t created = unix_time_now();
     const std::uint64_t req_id = ++request_seq_;
-    const RequestLogContext log_context =
+    RequestLogContext log_context =
         make_request_log_context(req_id, "openai_responses", request.generation, prepared);
+    log_context.client = request_client_info(req);
     log_request_start(log_context);
 
     if (!request.stream) {
