@@ -1,15 +1,21 @@
+name: ninfer4090
+
 services:
   ninfer:
     build:
       context: .
     image: ninfer-4090:sm89
     container_name: ninfer-4090
-    restart: unless-stopped
-    gpus: all
+    restart: "no"
+    environment:
+      CUDA_DEVICE_ORDER: PCI_BUS_ID
+      CUDA_VISIBLE_DEVICES: GPU-24e90667-f02e-1e21-e5fa-b4bd6566ce63
+      NVIDIA_VISIBLE_DEVICES: GPU-24e90667-f02e-1e21-e5fa-b4bd6566ce63
     ports:
       - "0.0.0.0:8080:8080"
     volumes:
       - ./models:/workspace/models:ro
+      - ./manager-tools/cuda-visible-probe:/usr/local/bin/cuda-visible-probe:ro
     command:
       - ninfer-serve
       - models/qwen3_8_27b.ninfer
@@ -17,10 +23,12 @@ services:
       - 0.0.0.0
       - --port
       - "8080"
+      - --device
+      - "0"
       - --max-context
       - "262144"
       - --kv-capacity
-      - "524288"
+      - "600000"
       - --max-concurrency
       - "8"
       - --max-pending-requests
@@ -40,3 +48,25 @@ services:
       - --preserve-thinking
       - --log-stats-interval-ms
       - "2000"
+      - --reasoning-effort
+      - xhigh
+      - --vision-max-tokens
+      - "8192"
+      - --default-max-tokens
+      - "32000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids:
+                - GPU-24e90667-f02e-1e21-e5fa-b4bd6566ce63
+              capabilities:
+                - gpu
+    stop_grace_period: 600s
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 300s

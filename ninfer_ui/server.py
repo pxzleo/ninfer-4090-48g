@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import mimetypes
 import os
@@ -35,6 +36,11 @@ SERVICE_NAME = os.environ.get("NINFER_UI_SERVICE", "ninfer")
 BACKUP_DIR = ROOT / "backups"
 HISTORY_PATH = Path(os.environ.get("NINFER_UI_HISTORY", ROOT / "history.sqlite3")).resolve()
 LAN_API_OVERRIDE = os.environ.get("NINFER_UI_LAN_API", "").strip()
+ALLOW_LAN = os.environ.get("NINFER_UI_ALLOW_LAN", "").strip() == "1"
+PUBLIC_HOST = os.environ.get("NINFER_UI_PUBLIC_HOST", "").strip().lower()
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 THROUGHPUT_RE = re.compile(
     r"throughput interval=(?P<interval>[0-9.]+)s "
@@ -101,6 +107,59 @@ def host_name(value: str) -> str:
         raise UiError(HTTPStatus.FORBIDDEN, "Host 格式无效") from exc
 
 
+def bind_host_allowed(host: str) -> bool:
+    if host in {"127.0.0.1", "::1"}:
+        return True
+    return ALLOW_LAN and bool(PUBLIC_HOST) and host == "0.0.0.0"
+
+
+def rfc1918_address(address: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return isinstance(parsed, ipaddress.IPv4Address) and any(
+        parsed in network for network in RFC1918_NETWORKS
+    )
+
+
+def public_host_allowed(host: str) -> bool:
+    return rfc1918_address(host)
+
+
+def mutation_client_allowed(address: str) -> bool:
+    if address in {"127.0.0.1", "::1"}:
+        return True
+    if not ALLOW_LAN:
+        return False
+    return rfc1918_address(address)
+
+
+def allowed_ui_hosts() -> set[str]:
+    hosts = {"127.0.0.1", "localhost", "::1"}
+    if ALLOW_LAN and PUBLIC_HOST:
+        hosts.add(PUBLIC_HOST)
+    return hosts
+
+
+def allowed_ui_origins(port: int) -> set[str]:
+    origins = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://[::1]:{port}",
+    }
+    if ALLOW_LAN and PUBLIC_HOST:
+        origin_host = f"[{PUBLIC_HOST}]" if ":" in PUBLIC_HOST else PUBLIC_HOST
+        origins.add(f"http://{origin_host}:{port}")
+    return origins
+
+
+def mutation_origin_allowed(origin: str | None, port: int) -> bool:
+    if ALLOW_LAN and not origin:
+        return False
+    return not origin or origin in allowed_ui_origins(port)
+
+
 def lan_api_url() -> str:
     target = urlparse(LAN_API_OVERRIDE or NINFER_BASE)
     if LAN_API_OVERRIDE:
@@ -108,20 +167,10 @@ def lan_api_url() -> str:
             raise ValueError("NINFER_UI_LAN_API 必须是有效的 HTTP(S) 地址")
         return LAN_API_OVERRIDE.rstrip("/")
 
-    host = ""
-    try:
-        if "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower():
-            host = socket.gethostbyname("host.docker.internal")
-        else:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                probe.connect(("1.1.1.1", 80))
-                host = probe.getsockname()[0]
-    except (OSError, UnicodeError):
-        host = ""
-    if not host:
-        return ""
+    # 保留 loopback 主机名，让前端使用当前浏览器访问管理器时的 hostname
+    # 动态生成局域网 API 地址，避免把 WSL/Docker 的历史网关地址当成 LAN 地址。
     port = f":{target.port}" if target.port else ""
-    return f"{target.scheme}://{host}{port}/v1"
+    return f"{target.scheme}://{target.hostname}{port}/v1"
 
 
 def parse_metrics(text: str) -> dict[str, float]:
@@ -235,12 +284,13 @@ def docker_timestamp_ms(line: str) -> int:
 
 
 def latest_throughput(lines: list[str]) -> dict[str, Any] | None:
-    for line in reversed(lines):
+    latest: dict[str, Any] | None = None
+    for line in lines:
         match = THROUGHPUT_RE.search(line)
         if not match:
             continue
         values = match.groupdict()
-        return {
+        candidate = {
             "timestamp_ms": docker_timestamp_ms(line),
             "interval_seconds": float(values["interval"]),
             "prefill_tokens_per_second": float(values["prefill"]),
@@ -254,7 +304,9 @@ def latest_throughput(lines: list[str]) -> dict[str, Any] | None:
             else float(values["batch"]),
             "line": line,
         }
-    return None
+        if latest is None or candidate["timestamp_ms"] > latest["timestamp_ms"]:
+            latest = candidate
+    return latest
 
 
 def current_throughput(
@@ -363,9 +415,8 @@ def request_events(lines: list[str], limit: int = 12) -> list[dict[str, Any]]:
                 "line": line,
             }
         )
-        if len(events) >= limit:
-            break
-    return events
+    events.sort(key=lambda event: event["timestamp_ms"], reverse=True)
+    return events[:limit]
 
 
 def reconcile_slot_kv_usage(metrics: dict[str, float], slots: Any) -> None:
@@ -412,9 +463,12 @@ def collect_snapshot() -> dict[str, Any]:
 
     try:
         backfill = not REQUEST_BACKFILL_COMPLETE
-        lines = docker_logs(5_000 if backfill else 500)
-        result["throughput"] = latest_throughput(lines)
-        HISTORY.record_completed_requests(request_events(lines, limit=50))
+        current_lines = docker_logs(100)
+        result["throughput"] = latest_throughput(current_lines)
+        request_lines = current_lines
+        if backfill:
+            request_lines = [*docker_logs(5_000), *current_lines]
+        HISTORY.record_completed_requests(request_events(request_lines, limit=50))
         REQUEST_BACKFILL_COMPLETE = True
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         result["errors"].append(f"Docker logs: {exc}")
@@ -551,20 +605,15 @@ class UiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _require_safe_mutation(self) -> None:
-        if self.client_address[0] not in {"127.0.0.1", "::1"}:
-            raise UiError(HTTPStatus.FORBIDDEN, "只允许本机修改配置")
+        if not mutation_client_allowed(self.client_address[0]):
+            raise UiError(HTTPStatus.FORBIDDEN, "客户端地址不在管理白名单")
         host = host_name(self.headers.get("Host", ""))
-        if host not in {"127.0.0.1", "localhost", "::1"}:
-            raise UiError(HTTPStatus.FORBIDDEN, "Host 不在本机白名单")
+        if host not in allowed_ui_hosts():
+            raise UiError(HTTPStatus.FORBIDDEN, "Host 不在管理白名单")
         origin = self.headers.get("Origin")
-        allowed = {
-            f"http://127.0.0.1:{self.server.server_port}",
-            f"http://localhost:{self.server.server_port}",
-            f"http://[::1]:{self.server.server_port}",
-        }
-        if origin and origin not in allowed:
-            raise UiError(HTTPStatus.FORBIDDEN, "Origin 不在本机白名单")
-        content_type = self.headers.get("Content-Type", "").split(";", 1)[0]
+        if not mutation_origin_allowed(origin, self.server.server_port):
+            raise UiError(HTTPStatus.FORBIDDEN, "Origin 不在管理白名单")
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             raise UiError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "必须使用 application/json")
 
@@ -716,8 +765,14 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8081, type=int)
     args = parser.parse_args()
-    if args.host not in {"127.0.0.1", "::1"}:
-        raise SystemExit("ninfer_ui 只允许绑定回环地址")
+    if args.host == "0.0.0.0" and ALLOW_LAN and not PUBLIC_HOST:
+        raise SystemExit("局域网模式必须设置 NINFER_UI_PUBLIC_HOST")
+    if not bind_host_allowed(args.host):
+        raise SystemExit(
+            "ninfer_ui 默认只允许绑定回环地址；局域网模式需设置 NINFER_UI_ALLOW_LAN=1"
+        )
+    if ALLOW_LAN and not public_host_allowed(PUBLIC_HOST):
+        raise SystemExit("NINFER_UI_PUBLIC_HOST 必须是 RFC1918 IPv4 地址")
     if not 1 <= args.port <= 65535:
         raise SystemExit("port 必须在 1..65535 之间")
     if not COMPOSE_PATH.is_file():

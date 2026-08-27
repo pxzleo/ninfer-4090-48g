@@ -25,6 +25,11 @@ class RequestEventsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "有效"):
             lan_api_url()
 
+    @patch.object(server_module, "LAN_API_OVERRIDE", "")
+    @patch.object(server_module, "NINFER_BASE", "http://127.0.0.1:8080")
+    def test_default_lan_api_keeps_loopback_for_browser_hostname_rewrite(self) -> None:
+        self.assertEqual(lan_api_url(), "http://127.0.0.1:8080/v1")
+
     def test_slot_kv_sum_reconciles_snapshot_total(self) -> None:
         metrics = {
             "ninfer:kv_cache_used_tokens": 999.0,
@@ -73,6 +78,41 @@ class RequestEventsTest(unittest.TestCase):
 
         self.assertIsNotNone(throughput)
         self.assertEqual(throughput["timestamp_ms"], 1787126877371)
+
+    def test_latest_throughput_uses_timestamp_when_streams_are_out_of_order(self) -> None:
+        older = (
+            "2026-08-19T08:07:55.000000000Z [info] throughput interval=2.000s "
+            "prefill=0.0tok/s decode=12.0tok/s running=1 prefilling=0 "
+            "decode_ready=1 waiting=0 avg_decode_batch=1.00"
+        )
+        newer = (
+            "2026-08-19T08:07:57.000000000Z [info] throughput interval=2.000s "
+            "prefill=0.0tok/s decode=88.0tok/s running=1 prefilling=0 "
+            "decode_ready=1 waiting=0 avg_decode_batch=1.00"
+        )
+
+        throughput = latest_throughput([newer, older])
+
+        self.assertIsNotNone(throughput)
+        self.assertEqual(throughput["decode_tokens_per_second"], 88.0)
+
+    def test_request_events_use_timestamp_order_when_streams_are_out_of_order(self) -> None:
+        def line(timestamp: str, request_id: int) -> str:
+            return (
+                f"{timestamp} [req {request_id}] done finish=stop prompt=100 gen=10 "
+                "cache=0 reuse=full_reset ttft=10ms prefill=10.0tok/s "
+                "decode=20.0tok/s wall=1.0s speculative=mtp 1.00tok/round (0.0%)"
+            )
+
+        events = request_events(
+            [
+                line("2026-08-19T08:07:57.000000000Z", 2),
+                line("2026-08-19T08:07:55.000000000Z", 1),
+            ],
+            limit=1,
+        )
+
+        self.assertEqual([event["id"] for event in events], [2])
 
     def test_parses_cache_tokens_and_hit_rate(self) -> None:
         line = (
@@ -209,6 +249,54 @@ class ServiceControlTest(unittest.TestCase):
     def test_host_name_accepts_ipv4_and_ipv6_loopback(self) -> None:
         self.assertEqual(host_name("127.0.0.1:8081"), "127.0.0.1")
         self.assertEqual(host_name("[::1]:8081"), "::1")
+
+    @patch.object(server_module, "ALLOW_LAN", False)
+    def test_default_security_rejects_lan_binding_and_client(self) -> None:
+        self.assertFalse(server_module.bind_host_allowed("0.0.0.0"))
+        self.assertFalse(server_module.mutation_client_allowed("192.168.100.20"))
+        self.assertTrue(server_module.mutation_origin_allowed(None, 8081))
+
+    @patch.object(server_module, "PUBLIC_HOST", "192.168.100.190")
+    @patch.object(server_module, "ALLOW_LAN", True)
+    def test_explicit_lan_mode_accepts_private_client_and_public_origin(self) -> None:
+        self.assertTrue(server_module.bind_host_allowed("0.0.0.0"))
+        self.assertFalse(server_module.bind_host_allowed("::"))
+        self.assertTrue(server_module.mutation_client_allowed("192.168.236.1"))
+        self.assertFalse(server_module.mutation_client_allowed("8.8.8.8"))
+        for address in (
+            "0.0.0.0",
+            "169.254.1.1",
+            "192.0.2.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "240.0.0.1",
+            "fe80::1",
+            "2001:db8::1",
+        ):
+            self.assertFalse(server_module.mutation_client_allowed(address), address)
+        self.assertIn("192.168.100.190", server_module.allowed_ui_hosts())
+        self.assertIn(
+            "http://192.168.100.190:8081", server_module.allowed_ui_origins(8081)
+        )
+        self.assertFalse(server_module.mutation_origin_allowed(None, 8081))
+        self.assertTrue(
+            server_module.mutation_origin_allowed(
+                "http://192.168.100.190:8081", 8081
+            )
+        )
+        self.assertFalse(
+            server_module.mutation_origin_allowed("http://evil.example", 8081)
+        )
+
+    @patch.object(server_module, "PUBLIC_HOST", "")
+    @patch.object(server_module, "ALLOW_LAN", True)
+    def test_lan_binding_requires_explicit_public_host(self) -> None:
+        self.assertFalse(server_module.bind_host_allowed("0.0.0.0"))
+
+    def test_public_host_requires_rfc1918_ipv4(self) -> None:
+        self.assertTrue(server_module.public_host_allowed("192.168.100.190"))
+        self.assertFalse(server_module.public_host_allowed("192.0.2.1"))
+        self.assertFalse(server_module.public_host_allowed("example.test"))
 
     @patch.object(server_module, "fetch_json", return_value={"status": "ok"})
     @patch.object(

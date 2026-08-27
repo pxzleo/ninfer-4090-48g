@@ -20,10 +20,15 @@ python3 ninfer_ui/server.py
 | `NINFER_UI_CONTAINER` | `ninfer-4090` | Docker 容器名 |
 | `NINFER_UI_SERVICE` | `ninfer` | Compose 服务名 |
 | `NINFER_UI_HISTORY` | `ninfer_ui/history.sqlite3` | 吞吐历史数据库路径 |
-| `NINFER_UI_LAN_API` | 自动探测 | 状态页显示的局域网 API 地址 |
+| `NINFER_UI_LAN_API` | 使用目标地址 | 状态页显示的局域网 API 地址；前端会把回环主机改写为当前 UI 主机 |
+| `NINFER_UI_ALLOW_LAN` | 未设置 | 设为 `1` 后允许绑定 `0.0.0.0` 并接受私网管理请求 |
+| `NINFER_UI_PUBLIC_HOST` | 未设置 | LAN 模式允许的浏览器 Host / Origin，例如 `192.168.100.190` |
 
-服务拒绝绑定非回环地址。配置写入、历史清理和服务控制接口还会验证客户端 IP、Host、Origin、JSON
-Content-Type 和确认短语，避免普通网页跨站触发本机管理操作。
+默认模式拒绝绑定非回环地址。只有 `NINFER_UI_ALLOW_LAN=1`、`NINFER_UI_PUBLIC_HOST` 是 RFC1918
+IPv4 且监听地址为 `0.0.0.0` 时才启用 LAN 模式。管理操作要求 RFC1918 TCP 对端、匹配的 Host 和
+Origin、JSON Content-Type 及确认短语。Windows `portproxy` 会把原始客户端地址隐藏成 WSL 网关，
+因此经转发访问时，真实来源范围必须由 Windows 防火墙限制；本机部署使用 Private Profile、
+LocalSubnet、TCP 8081 和指定 WLAN 地址。LAN 模式没有账号认证，只应在可信局域网中使用。
 
 ## 功能
 

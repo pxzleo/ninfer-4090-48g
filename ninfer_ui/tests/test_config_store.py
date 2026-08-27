@@ -70,6 +70,34 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(updated["kv_capacity"], "524288")
         self.assertIn('      - "524288"', result.diff)
 
+    def test_updates_vision_budgets(self) -> None:
+        config = parse_config(COMPOSE)
+        self.assertEqual(config["vision_max_tokens"], 8192)
+        self.assertEqual(config["image_token_budget"], 0)
+
+        config["vision_max_tokens"] = 16384
+        config["image_token_budget"] = 1024
+        result = preview(COMPOSE, config)
+        updated = parse_config(result.rendered)
+
+        self.assertEqual(updated["vision_max_tokens"], 16384)
+        self.assertEqual(updated["image_token_budget"], 1024)
+        self.assertIn("--vision-max-tokens\n      - \"16384\"", result.rendered)
+        self.assertIn("--image-token-budget\n      - \"1024\"", result.rendered)
+
+    def test_rejects_vision_budget_over_context(self) -> None:
+        config = parse_config(COMPOSE)
+        config["vision_max_tokens"] = config["max_context"] + 1
+        with self.assertRaisesRegex(ConfigError, "vision_max_tokens"):
+            preview(COMPOSE, config)
+
+    def test_rejects_image_budget_over_total_vision_budget(self) -> None:
+        config = parse_config(COMPOSE)
+        config["vision_max_tokens"] = 8192
+        config["image_token_budget"] = 8193
+        with self.assertRaisesRegex(ConfigError, "image_token_budget"):
+            preview(COMPOSE, config)
+
     def test_rejects_native_context_overflow(self) -> None:
         config = parse_config(COMPOSE)
         config["max_context"] = 262145

@@ -13,6 +13,8 @@ from typing import Any
 
 
 NATIVE_CONTEXT = 262_144
+DEFAULT_VISION_MAX_TOKENS = 8_192
+DEFAULT_IMAGE_TOKEN_BUDGET = 0
 KV_DTYPES = ("bf16", "int8", "rk8v4", "rk4v4", "rk4v4-e8", "rk2v4-e8")
 SPEC_MODES = ("off", "mtp")
 REASONING_EFFORTS = ("none", "low", "medium", "xhigh")
@@ -143,6 +145,12 @@ def parse_config(text: str) -> dict[str, Any]:
         "draft_tokens": _required_int(values, "--draft-tokens", 3),
         "lm_head_draft": "--lm-head-draft" in flags,
         "vision": "--vision" in flags,
+        "vision_max_tokens": _required_int(
+            values, "--vision-max-tokens", DEFAULT_VISION_MAX_TOKENS
+        ),
+        "image_token_budget": _required_int(
+            values, "--image-token-budget", DEFAULT_IMAGE_TOKEN_BUDGET
+        ),
         "preserve_thinking": "--preserve-thinking" in flags,
         "reasoning_effort": (
             "none" if "--no-thinking" in flags else values.get("--reasoning-effort", "xhigh")
@@ -185,6 +193,8 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "draft_tokens",
         "lm_head_draft",
         "vision",
+        "vision_max_tokens",
+        "image_token_budget",
         "preserve_thinking",
         "reasoning_effort",
         "chinese_reasoning",
@@ -203,6 +213,13 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
     max_context = _int_field(candidate, "max_context")
     if not 1 <= max_context <= NATIVE_CONTEXT:
         raise ConfigError(f"max_context 必须在 1..{NATIVE_CONTEXT} 之间")
+
+    vision_max_tokens = _int_field(candidate, "vision_max_tokens")
+    if not 1 <= vision_max_tokens <= max_context:
+        raise ConfigError("vision_max_tokens 必须在 1..max_context 之间")
+    image_token_budget = _int_field(candidate, "image_token_budget")
+    if not 0 <= image_token_budget <= vision_max_tokens:
+        raise ConfigError("image_token_budget 必须在 0..vision_max_tokens 之间")
 
     max_concurrency = _int_field(candidate, "max_concurrency")
     if not 1 <= max_concurrency <= 8:
@@ -269,6 +286,8 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "draft_tokens": draft_tokens,
         "lm_head_draft": _bool_field(candidate, "lm_head_draft"),
         "vision": _bool_field(candidate, "vision"),
+        "vision_max_tokens": vision_max_tokens,
+        "image_token_budget": image_token_budget,
         "preserve_thinking": _bool_field(candidate, "preserve_thinking"),
         "reasoning_effort": reasoning_effort,
         "chinese_reasoning": chinese_reasoning,
@@ -325,6 +344,14 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
     optional_values = {
         "--log-stats-interval-ms": (str(config["log_stats_interval_ms"]), "5000"),
         "--default-max-tokens": (str(config["default_max_tokens"]), "8192"),
+        "--vision-max-tokens": (
+            str(config["vision_max_tokens"]),
+            str(DEFAULT_VISION_MAX_TOKENS),
+        ),
+        "--image-token-budget": (
+            str(config["image_token_budget"]),
+            str(DEFAULT_IMAGE_TOKEN_BUDGET),
+        ),
     }
     for option, (value, default) in optional_values.items():
         if option in tokens or value != default:
