@@ -405,13 +405,14 @@ process.stdout.write(JSON.stringify([
             ],
         )
 
-    def test_week_axis_uses_the_full_calendar_period(self):
+    def test_calendar_axes_use_the_full_natural_period(self):
         script = f"""
 const {{historyAxisPeriod}} = require({json.dumps(str(APP_JS))});
 const meta = {{start_ms: 1000, end_ms: 701000, available_end_ms: 101000}};
 process.stdout.write(JSON.stringify({{
   day: historyAxisPeriod(meta, "day"),
   week: historyAxisPeriod(meta, "week"),
+  month: historyAxisPeriod(meta, "month"),
 }}));
 """
         result = subprocess.run(
@@ -420,8 +421,9 @@ process.stdout.write(JSON.stringify({{
         self.assertEqual(
             json.loads(result.stdout),
             {
-                "day": {"start_ms": 1000, "end_ms": 101000},
+                "day": {"start_ms": 1000, "end_ms": 701000},
                 "week": {"start_ms": 1000, "end_ms": 701000},
+                "month": {"start_ms": 1000, "end_ms": 701000},
             },
         )
 
@@ -437,6 +439,45 @@ process.stdout.write(JSON.stringify(historyViewportFromChart(meta, "week", 0, 50
         self.assertEqual(
             json.loads(result.stdout),
             {"start_ms": 1000, "end_ms": 351000},
+        )
+
+    def test_current_calendar_zoom_can_expand_beyond_available_data(self):
+        script = f"""
+const {{historyZoomState}} = require({json.dumps(str(APP_JS))});
+const meta = {{
+  start_ms: 0,
+  end_ms: 24 * 60 * 60 * 1000,
+  available_end_ms: 60 * 60 * 1000,
+  bucket_ms: 60 * 60 * 1000,
+  is_current_period: true,
+}};
+process.stdout.write(JSON.stringify({{
+  atLatest: historyZoomState(meta, "day", {{start_ms: 0, end_ms: 60 * 60 * 1000}}),
+  lagged: historyZoomState(meta, "day", {{start_ms: 0, end_ms: 59 * 60 * 1000}}),
+  expanded: historyZoomState(meta, "day", {{start_ms: 0, end_ms: 2 * 60 * 60 * 1000}}),
+  full: historyZoomState(meta, "day", {{start_ms: 0, end_ms: 24 * 60 * 60 * 1000}}),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "atLatest": {
+                    "viewport": {"start_ms": 0, "end_ms": 3_600_000},
+                    "followsLatest": True,
+                },
+                "lagged": {
+                    "viewport": {"start_ms": 0, "end_ms": 3_540_000},
+                    "followsLatest": False,
+                },
+                "expanded": {
+                    "viewport": {"start_ms": 0, "end_ms": 7_200_000},
+                    "followsLatest": False,
+                },
+                "full": {"viewport": None, "followsLatest": True},
+            },
         )
 
     def test_week_axis_labels_use_weekdays_and_add_time_when_zoomed(self):
@@ -455,6 +496,26 @@ process.stdout.write(JSON.stringify({{
         values = json.loads(result.stdout)
         self.assertEqual(values["full"], "周一")
         self.assertRegex(values["zoomed"], r"^周一 \d{2}:\d{2}$")
+
+    def test_day_and_month_axes_use_time_and_date_labels(self):
+        script = f"""
+const {{historyAxisTickLabel, setLanguageMode}} = require({json.dumps(str(APP_JS))});
+setLanguageMode("zh-CN");
+const timestamp = new Date(2026, 8, 1, 12, 34, 0).getTime();
+process.stdout.write(JSON.stringify({{
+  day23: historyAxisTickLabel("day", 23 * 60 * 60 * 1000, timestamp),
+  day24: historyAxisTickLabel("day", 24 * 60 * 60 * 1000, timestamp),
+  day25: historyAxisTickLabel("day", 25 * 60 * 60 * 1000, timestamp),
+  month: historyAxisTickLabel("month", 31 * 24 * 60 * 60 * 1000, timestamp),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"day23": "12:34", "day24": "12:34", "day25": "12:34", "month": "9/1"},
+        )
 
     def test_latest_history_window_advances_with_available_time(self):
         script = f"""

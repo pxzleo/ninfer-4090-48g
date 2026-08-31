@@ -10,9 +10,9 @@ from typing import Any
 
 RANGES = {
     "realtime": {"window_ms": 5 * 60_000, "bucket_ms": 2_000, "label": "最近5分钟 · 2秒采样"},
-    "day": {"bucket_ms": 5 * 60_000, "label": "自然日 · 均值与峰值分离"},
-    "week": {"bucket_ms": 10 * 60_000, "label": "自然周 · 均值与峰值分离"},
-    "month": {"bucket_ms": 2 * 60 * 60_000, "label": "自然月 · 均值与峰值分离"},
+    "day": {"label": "自然日 · 均值与峰值分离"},
+    "week": {"label": "自然周 · 均值与峰值分离"},
+    "month": {"label": "自然月 · 均值与峰值分离"},
 }
 AGGREGATE_RETENTION_MS = 400 * 24 * 60 * 60_000
 COMPLETED_REQUEST_LIMIT = 50
@@ -350,6 +350,9 @@ class HistoryStore:
                 overview_samples = samples
                 sample_bucket_ms = config["bucket_ms"]
             else:
+                overview_bucket_ms = self._detail_bucket_ms(
+                    max(1, available_end_ms - start_ms)
+                )
                 overview_rows = connection.execute(
                     """
                     SELECT bucket_ms, decode_sum, prefill_sum, sample_count,
@@ -361,7 +364,7 @@ class HistoryStore:
                     (start_ms, available_end_ms),
                 ).fetchall()
                 overview_samples = self._aggregate_with_peaks(
-                    overview_rows, start_ms, available_end_ms, config["bucket_ms"]
+                    overview_rows, start_ms, available_end_ms, overview_bucket_ms
                 )
                 if detail_requested:
                     assert detail_start_ms is not None and detail_end_ms is not None
@@ -391,14 +394,16 @@ class HistoryStore:
                     )
                 else:
                     samples = overview_samples
-                    sample_bucket_ms = config["bucket_ms"]
+                    sample_bucket_ms = overview_bucket_ms
         return {
             "range": period,
             "label": config["label"],
             "period_label": period_label,
             "period_anchor_ms": start_ms,
             "is_current_period": is_current_period,
-            "bucket_ms": config["bucket_ms"],
+            "bucket_ms": (
+                config["bucket_ms"] if period == "realtime" else overview_bucket_ms
+            ),
             "compression": "raw" if period == "realtime" else "average_peak_envelope",
             "start_ms": start_ms,
             "end_ms": end_ms,

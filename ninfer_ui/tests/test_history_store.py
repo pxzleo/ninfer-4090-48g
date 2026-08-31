@@ -138,19 +138,20 @@ class HistoryStoreTest(unittest.TestCase):
                 self.store.query("day", selected["end_ms"] + 120_000)["samples"]
             )
 
-    def test_day_uses_weighted_five_minute_buckets(self) -> None:
+    def test_day_uses_minute_buckets_without_flattening_adjacent_minutes(self) -> None:
         now = 1_800_000_000_000
-        bucket = now // 300_000 * 300_000
+        bucket = now // 60_000 * 60_000
         self.store.record(bucket + 1_000, 10.0, 100.0)
         self.store.record(bucket + 61_000, 30.0, 300.0)
 
         result = self.store.query("day", now + 120_000)
 
-        self.assertEqual(len(result["samples"]), 1)
-        self.assertEqual(result["samples"][0]["decode"], 20.0)
-        self.assertEqual(result["samples"][0]["prefill"], 200.0)
-        self.assertEqual(result["samples"][0]["decode_peak"], 30.0)
-        self.assertEqual(result["samples"][0]["prefill_peak"], 300.0)
+        self.assertEqual(result["sample_bucket_ms"], 60_000)
+        self.assertEqual(len(result["samples"]), 2)
+        self.assertEqual(result["samples"][0]["decode"], 10.0)
+        self.assertEqual(result["samples"][0]["prefill"], 100.0)
+        self.assertEqual(result["samples"][1]["decode"], 30.0)
+        self.assertEqual(result["samples"][1]["prefill"], 300.0)
 
     def test_day_preserves_short_peak_when_compressed(self) -> None:
         now = 1_800_000_000_000
@@ -196,6 +197,15 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertLessEqual(
             max(row["timestamp_ms"] for row in result["samples"]), now
         )
+
+    def test_early_current_month_keeps_minute_detail(self) -> None:
+        period = self.store.query("month", 1_800_000_000_000)
+        now = period["start_ms"] + 40 * 60_000
+        self.store.record(now - 60_000, 12.0, 24.0)
+
+        result = self.store.query("month", now)
+
+        self.assertEqual(result["sample_bucket_ms"], 60_000)
 
     def test_current_period_recovers_from_previous_period_detail_window(self) -> None:
         day_ms = 24 * 60 * 60_000
@@ -289,8 +299,8 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(start, datetime(2026, 8, 17, tzinfo=zone))
         self.assertEqual(end, datetime(2026, 8, 24, tzinfo=zone))
         self.assertEqual(result["period_label"], "2026年8月17日–2026年8月23日")
-        self.assertEqual(result["bucket_ms"], 10 * 60_000)
-        self.assertEqual(result["sample_bucket_ms"], 10 * 60_000)
+        self.assertEqual(result["bucket_ms"], 5 * 60_000)
+        self.assertEqual(result["sample_bucket_ms"], 5 * 60_000)
 
     def test_month_runs_from_first_day_to_next_month(self) -> None:
         zone = datetime.now().astimezone().tzinfo
@@ -303,6 +313,8 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(start, datetime(2028, 2, 1, tzinfo=zone))
         self.assertEqual(end, datetime(2028, 3, 1, tzinfo=zone))
         self.assertEqual((end - timedelta(milliseconds=1)).day, 29)
+        self.assertEqual(result["bucket_ms"], 30 * 60_000)
+        self.assertEqual(result["sample_bucket_ms"], 30 * 60_000)
 
     def test_anchor_selects_previous_calendar_day(self) -> None:
         zone = datetime.now().astimezone().tzinfo

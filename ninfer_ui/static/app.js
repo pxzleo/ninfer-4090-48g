@@ -5,6 +5,7 @@ const LOG_REFRESH_MS = 2000;
 const LANGUAGE_STORAGE_KEY = "ninfer-ui-language";
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
+const HISTORY_FOLLOW_TOLERANCE_MS = 1_000;
 
 const I18N = {
   "zh-CN": {
@@ -620,7 +621,7 @@ function historyAvailablePeriod(period) {
 
 function historyAxisPeriod(period, range) {
   const available = historyAvailablePeriod(period);
-  if (!available || range !== "week") return available;
+  if (!available || !["day", "week", "month"].includes(range)) return available;
   return { start_ms: Number(period.start_ms), end_ms: Number(period.end_ms) };
 }
 
@@ -752,6 +753,26 @@ function historyViewportFollowsReference(viewport, referenceMs, toleranceMs = 0)
     && Math.abs(Number(viewport.end_ms) - Number(referenceMs)) <= Math.max(1, Number(toleranceMs) || 0);
 }
 
+function historyZoomState(period, range, viewport) {
+  const axisPeriod = historyAxisPeriod(period, range);
+  const current = clampHistoryViewport(axisPeriod, viewport);
+  if (!axisPeriod || !current) return { viewport: null, followsLatest: false };
+  const periodDuration = axisPeriod.end_ms - axisPeriod.start_ms;
+  const viewportDuration = current.end_ms - current.start_ms;
+  const selected = viewportDuration >= periodDuration - 1 ? null : current;
+  const referenceMs = historyAvailablePeriod(period)?.end_ms;
+  return {
+    viewport: selected,
+    followsLatest: Boolean(
+      period?.is_current_period
+        && (selected === null
+          || historyViewportFollowsReference(
+            current, referenceMs, HISTORY_FOLLOW_TOLERANCE_MS,
+          ))
+    ),
+  };
+}
+
 function historySeriesData(
   samples, key, bucketMs, periodStartMs = 0, compressed = false, stableNames = false,
 ) {
@@ -867,30 +888,10 @@ function syncViewportFromChart() {
   if (state.historyChartSyncing || !state.historyChart || !state.historyMeta || state.historyRange === "realtime") return;
   const zoom = state.historyChart.getOption().dataZoom?.find(item => item.id === "history-inside");
   if (!zoom) return;
-  const axisPeriod = historyAxisPeriod(state.historyMeta, state.historyRange);
   const viewport = historyViewportFromChart(state.historyMeta, state.historyRange, zoom.start, zoom.end);
-  const periodDuration = axisPeriod.end_ms - axisPeriod.start_ms;
-  const viewportDuration = viewport.end_ms - viewport.start_ms;
-  if (state.historyRange !== "week"
-      && state.historyMeta.is_current_period
-      && viewportDuration < periodDuration - 1
-      && viewport.end_ms > historyReferenceMs()) {
-    state.historyViewport = presetHistoryViewport(
-      axisPeriod, viewportDuration, historyReferenceMs(),
-    );
-    state.historyViewportFollowingLatest = true;
-    drawChart();
-    return;
-  }
-  state.historyViewport = viewportDuration >= periodDuration - 1 ? null : viewport;
-  state.historyViewportFollowingLatest = Boolean(
-    state.historyMeta.is_current_period
-      && (state.historyViewport === null
-        || historyViewportFollowsReference(
-          viewport, historyReferenceMs(), state.historyMeta.bucket_ms,
-        ))
-  );
-  updateHistoryControls();
+  const zoomState = historyZoomState(state.historyMeta, state.historyRange, viewport);
+  state.historyViewport = zoomState.viewport;
+  state.historyViewportFollowingLatest = zoomState.followsLatest;
   scheduleHistoryDetailLoad();
 }
 
@@ -1624,6 +1625,7 @@ if (typeof module !== "undefined") {
     historyViewportFromChart,
     historyViewportFollowsReference,
     historyViewportPercent,
+    historyZoomState,
     kvCacheUsage,
     lanApiAddress,
     languageFromPreferences,
