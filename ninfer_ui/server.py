@@ -575,7 +575,8 @@ class UiHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; style-src 'self'; script-src 'self'; "
+            "default-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; "
+            "script-src 'self'; "
             "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
         )
 
@@ -644,7 +645,19 @@ class UiHandler(BaseHTTPRequestHandler):
                 try:
                     anchor_values = query.get("anchor_ms")
                     anchor_ms = int(anchor_values[0]) if anchor_values else None
-                    payload = HISTORY.query(period, int(time.time() * 1000), anchor_ms)
+                    detail_start_values = query.get("detail_start_ms")
+                    detail_end_values = query.get("detail_end_ms")
+                    detail_start_ms = (
+                        int(detail_start_values[0]) if detail_start_values else None
+                    )
+                    detail_end_ms = int(detail_end_values[0]) if detail_end_values else None
+                    payload = HISTORY.query(
+                        period,
+                        int(time.time() * 1000),
+                        anchor_ms,
+                        detail_start_ms,
+                        detail_end_ms,
+                    )
                 except ValueError as exc:
                     raise UiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
                 self._send_json(HTTPStatus.OK, payload)

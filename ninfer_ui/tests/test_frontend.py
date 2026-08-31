@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -319,48 +320,200 @@ process.stdout.write(JSON.stringify(calculateSlotDecodeRates({{}}, [slot], 3000,
         )
         self.assertEqual(json.loads(result.stdout), {})
 
-    def test_chart_uses_timestamps_and_breaks_gaps(self):
+    def test_echarts_is_local_and_loaded_before_application(self):
+        html = APP_HTML.read_text(encoding="utf-8")
+        echarts = APP_HTML.parent / "echarts.min.js"
+        license_file = APP_HTML.parent / "ECHARTS-LICENSE.txt"
+        notice_file = APP_HTML.parent / "ECHARTS-NOTICE.txt"
+        d3_license_file = APP_HTML.parent / "licenses" / "LICENSE-d3.txt"
+        zrender_license_file = APP_HTML.parent / "licenses" / "LICENSE-zrender.txt"
+        self.assertTrue(echarts.is_file())
+        self.assertEqual(
+            hashlib.sha256(echarts.read_bytes()).hexdigest(),
+            "b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0",
+        )
+        self.assertIn("Apache License", license_file.read_text(encoding="utf-8"))
+        self.assertIn("Apache ECharts", notice_file.read_text(encoding="utf-8"))
+        self.assertIn("Redistribution and use", d3_license_file.read_text(encoding="utf-8"))
+        self.assertIn("Baidu Inc.", zrender_license_file.read_text(encoding="utf-8"))
+        self.assertIn("Redistribution and use", zrender_license_file.read_text(encoding="utf-8"))
+        self.assertLess(
+            html.index('/static/echarts.min.js'), html.index('/static/app.js')
+        )
+        self.assertIn('id="throughput-chart"', html)
+        self.assertNotIn('id="chart-window-controls"', html)
+        self.assertNotIn('id="history-presets"', html)
+        self.assertNotIn('id="chart-zoom-slider"', html)
+        self.assertNotIn('id="chart-tooltip"', html)
+        javascript = APP_JS.read_text(encoding="utf-8")
+        self.assertIn('id: "history-inside"', javascript)
+        self.assertNotIn('id: "history-navigator"', javascript)
+        self.assertNotIn("xAxisIndex: 1", javascript)
+        self.assertNotIn("gridIndex: 1", javascript)
+
+    def test_throughput_series_visual_uses_one_color_for_line_area_and_marker(self):
         script = f"""
-const {{chartGeometry}} = require({json.dumps(str(APP_JS))});
-const geometry = chartGeometry([
-  {{timestamp_ms: 2000, decode: 10}},
-  {{timestamp_ms: 4000, decode: 20}},
-  {{timestamp_ms: 9000, decode: 30}},
-], "decode", 100, 100, 30, 0, 10000, 2000);
-process.stdout.write(JSON.stringify(geometry));
+const {{throughputSeriesVisual}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify(throughputSeriesVisual("#76f0bd")));
 """
         result = subprocess.run(
-            ["node", "-e", script],
-            check=True,
-            capture_output=True,
-            text=True,
+            ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        geometry = json.loads(result.stdout)
-        self.assertIn("M20.00", geometry["line"])
-        self.assertIn("L40.00", geometry["line"])
-        self.assertEqual(geometry["line"].count("M"), 2)
-        self.assertEqual(geometry["area"].count("Z"), 1)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "lineStyle": {"color": "#76f0bd", "width": 2},
+                "areaStyle": {"color": "#76f0bd", "opacity": 0.065},
+                "itemStyle": {"color": "#76f0bd"},
+            },
+        )
 
-    def test_chart_tooltip_selects_nearest_real_sample(self):
+    def test_history_viewport_percentage_round_trips(self):
         script = f"""
-const {{nearestHistorySample}} = require({json.dumps(str(APP_JS))});
-const samples = [
-  {{timestamp_ms: 1000, decode: 10}},
-  {{timestamp_ms: 4000, decode: 40}},
-  {{timestamp_ms: 10000, decode: 100}},
-];
+const {{historyViewportFromPercent, historyViewportPercent}} = require({json.dumps(str(APP_JS))});
+const period = {{start_ms: 1000, end_ms: 11000}};
+const viewport = historyViewportFromPercent(period, 25, 75);
+process.stdout.write(JSON.stringify({{viewport, percent: historyViewportPercent(period, viewport)}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "viewport": {"start_ms": 3500, "end_ms": 8500},
+                "percent": {"start": 25, "end": 75},
+            },
+        )
+
+    def test_current_history_domain_ends_at_server_available_time(self):
+        script = f"""
+const {{historyAvailablePeriod}} = require({json.dumps(str(APP_JS))});
 process.stdout.write(JSON.stringify([
-  nearestHistorySample(samples, 0),
-  nearestHistorySample(samples, 2600),
-  nearestHistorySample(samples, 8000),
-  nearestHistorySample(samples, 12000),
+  historyAvailablePeriod({{start_ms: 1000, end_ms: 11000, available_end_ms: 7000}}),
+  historyAvailablePeriod({{start_ms: 1000, end_ms: 11000}}),
 ]));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        selected = json.loads(result.stdout)
-        self.assertEqual([item["timestamp_ms"] for item in selected], [1000, 4000, 10000, 10000])
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                {"start_ms": 1000, "end_ms": 7000},
+                {"start_ms": 1000, "end_ms": 11000},
+            ],
+        )
+
+    def test_week_axis_uses_the_full_calendar_period(self):
+        script = f"""
+const {{historyAxisPeriod}} = require({json.dumps(str(APP_JS))});
+const meta = {{start_ms: 1000, end_ms: 701000, available_end_ms: 101000}};
+process.stdout.write(JSON.stringify({{
+  day: historyAxisPeriod(meta, "day"),
+  week: historyAxisPeriod(meta, "week"),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "day": {"start_ms": 1000, "end_ms": 101000},
+                "week": {"start_ms": 1000, "end_ms": 701000},
+            },
+        )
+
+    def test_current_week_chart_zoom_keeps_the_selected_calendar_window(self):
+        script = f"""
+const {{historyViewportFromChart}} = require({json.dumps(str(APP_JS))});
+const meta = {{start_ms: 1000, end_ms: 701000, available_end_ms: 101000}};
+process.stdout.write(JSON.stringify(historyViewportFromChart(meta, "week", 0, 50)));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"start_ms": 1000, "end_ms": 351000},
+        )
+
+    def test_week_axis_labels_use_weekdays_and_add_time_when_zoomed(self):
+        script = f"""
+const {{historyAxisTickLabel, setLanguageMode}} = require({json.dumps(str(APP_JS))});
+setLanguageMode("zh-CN");
+const monday = new Date(2026, 7, 31, 12, 0, 0).getTime();
+process.stdout.write(JSON.stringify({{
+  full: historyAxisTickLabel("week", 7 * 24 * 60 * 60 * 1000, monday),
+  zoomed: historyAxisTickLabel("week", 6 * 60 * 60 * 1000, monday),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        values = json.loads(result.stdout)
+        self.assertEqual(values["full"], "周一")
+        self.assertRegex(values["zoomed"], r"^周一 \d{2}:\d{2}$")
+
+    def test_latest_history_window_advances_with_available_time(self):
+        script = f"""
+const {{refreshHistoryViewport}} = require({json.dumps(str(APP_JS))});
+const next = {{start_ms: 1000, end_ms: 8000}};
+const viewport = {{start_ms: 3000, end_ms: 7000}};
+process.stdout.write(JSON.stringify([
+  refreshHistoryViewport(next, viewport, true),
+  refreshHistoryViewport(next, viewport, false),
+  refreshHistoryViewport(next, viewport, true, 6000),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                {"start_ms": 4000, "end_ms": 8000},
+                {"start_ms": 3000, "end_ms": 7000},
+                {"start_ms": 2000, "end_ms": 6000},
+            ],
+        )
+
+    def test_history_period_change_and_visible_window_are_deterministic(self):
+        script = f"""
+const {{historyPeriodChanged}} = require({json.dumps(str(APP_JS))});
+const previous = {{period_anchor_ms: 100, start_ms: 0, end_ms: 1000}};
+process.stdout.write(JSON.stringify({{
+  same: historyPeriodChanged(previous, {{period_anchor_ms: 100, start_ms: 0, end_ms: 1000}}),
+  crossed: historyPeriodChanged(previous, {{period_anchor_ms: 200, start_ms: 1000, end_ms: 2000}}),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"same": False, "crossed": True},
+        )
+
+    def test_history_pan_preserves_window_and_stops_at_boundaries(self):
+        script = f"""
+const {{panHistoryViewport}} = require({json.dumps(str(APP_JS))});
+const period = {{start_ms: 0, end_ms: 10000}};
+const viewport = {{start_ms: 3000, end_ms: 5000}};
+process.stdout.write(JSON.stringify([
+  panHistoryViewport(period, viewport, 0.5),
+  panHistoryViewport(period, viewport, -10),
+  panHistoryViewport(period, viewport, 10),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        values = json.loads(result.stdout)
+        self.assertEqual(values[0], {"start_ms": 4000, "end_ms": 6000})
+        self.assertEqual(values[1], {"start_ms": 0, "end_ms": 2000})
+        self.assertEqual(values[2], {"start_ms": 8000, "end_ms": 10000})
 
     def test_chinese_translations_do_not_display_prefix_term(self):
         script = f"""
@@ -374,76 +527,227 @@ process.stdout.write(JSON.stringify(Object.values(I18N["zh-CN"])));
         self.assertNotRegex(visible_text, r"(?i)prefix|前缀")
         self.assertIn("缓存复用", visible_text)
 
-    def test_chart_breaks_when_a_compressed_bucket_is_missing(self):
+    def test_chart_series_inserts_null_when_a_compressed_bucket_is_missing(self):
         script = f"""
-const {{chartGeometry}} = require({json.dumps(str(APP_JS))});
-const geometry = chartGeometry([
-  {{timestamp_ms: 0, decode: 10}},
-  {{timestamp_ms: 299999, decode: 20}},
-  {{timestamp_ms: 600000, decode: 30}},
-  {{timestamp_ms: 899999, decode: 40}},
-], "decode", 100, 100, 40, 0, 900000, 300000, true);
-process.stdout.write(JSON.stringify(geometry));
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const data = historySeriesData([
+  {{timestamp_ms: 0, bucket_end_ms: 300000, decode: 10}},
+  {{timestamp_ms: 600000, bucket_end_ms: 900000, decode: 30}},
+], "decode", 300000, 0, true);
+process.stdout.write(JSON.stringify(data));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        self.assertEqual(json.loads(result.stdout)["line"].count("M"), 2)
+        data = json.loads(result.stdout)
+        self.assertEqual(data[2], [300000, None])
 
-    def test_realtime_chart_tolerates_normal_sampling_jitter(self):
+    def test_compressed_chart_gaps_align_to_the_natural_period_start(self):
         script = f"""
-const {{chartGeometry}} = require({json.dumps(str(APP_JS))});
-const geometry = chartGeometry([
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const data = historySeriesData([
+  {{timestamp_ms: 600, bucket_end_ms: 1600, decode: 10}},
+  {{timestamp_ms: 2600, bucket_end_ms: 3600, decode: 20}},
+], "decode", 1000, 600, true);
+process.stdout.write(JSON.stringify(data));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout), [
+                [600, 10, 10, 600],
+                [1599, 10, 10, 600],
+                [1600, None],
+                [2600, 20, 20, 2600],
+                [3599, 20, 20, 2600],
+            ],
+        )
+
+    def test_aggregate_line_keeps_peak_metadata_for_tooltip(self):
+        script = f"""
+const {{historyAverageSeriesData}} = require({json.dumps(str(APP_JS))});
+const samples = [{{
+  timestamp_ms: 0, bucket_end_ms: 300000, decode: 10,
+  decode_peak: 120, decode_peak_ms: 61000,
+}}];
+process.stdout.write(JSON.stringify(historyAverageSeriesData(samples, "decode", 300000, 0)));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            [[0, 10, 120, 61000], [299999, 10, 120, 61000]],
+        )
+
+    def test_realtime_chart_uses_two_second_horizontal_intervals(self):
+        script = f"""
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const data = historySeriesData([
   {{timestamp_ms: 1999, decode: 10}},
   {{timestamp_ms: 4001, decode: 20}},
-], "decode", 100, 100, 20, 0, 6000, 2000);
-process.stdout.write(JSON.stringify(geometry));
+], "decode", 2000);
+process.stdout.write(JSON.stringify(data));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        self.assertEqual(json.loads(result.stdout)["line"].count("M"), 1)
+        self.assertEqual(
+            json.loads(result.stdout),
+            [[1999, 10], [4000, 10], [4001, 20], [6000, 20]],
+        )
 
-    def test_history_axes_show_intermediate_time_labels(self):
+    def test_realtime_chart_keeps_collection_gaps_disconnected(self):
         script = f"""
-const {{historyAxisTicks}} = require({json.dumps(str(APP_JS))});
-const start = new Date(2026, 7, 19, 0, 0, 0).getTime();
-const end = new Date(2026, 7, 20, 0, 0, 0).getTime();
-const data = {{start_ms: start, end_ms: end}};
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const data = historySeriesData([
+  {{timestamp_ms: 0, decode: 10}},
+  {{timestamp_ms: 10000, decode: 20}},
+], "decode", 2000);
+process.stdout.write(JSON.stringify(data));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            [[0, 10], [1999, 10], [2000, None], [10000, 20], [11999, 20]],
+        )
+
+    def test_realtime_series_uses_stable_timestamp_names_for_animation(self):
+        script = f"""
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const samples = [
+  {{timestamp_ms: 1000, decode: 10}},
+  {{timestamp_ms: 3000, decode: 20}},
+];
+process.stdout.write(JSON.stringify(historySeriesData(samples, "decode", 2000, 0, false, true)));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                {"name": "decode:1000:start", "value": [1000, 10]},
+                {"name": "decode:1000:end", "value": [2999, 10]},
+                {"name": "decode:3000:start", "value": [3000, 20]},
+                {"name": "decode:3000:end", "value": [4999, 20]},
+            ],
+        )
+
+    def test_realtime_series_keeps_tail_identity_between_refreshes(self):
+        script = f"""
+const {{historySeriesData}} = require({json.dumps(str(APP_JS))});
+const before = historySeriesData([
+  {{timestamp_ms: 1000, decode: 10}},
+], "decode", 2000, 0, false, true);
+const after = historySeriesData([
+  {{timestamp_ms: 1000, decode: 10}},
+  {{timestamp_ms: 3100, decode: 20}},
+], "decode", 2000, 0, false, true);
+process.stdout.write(JSON.stringify({{before, after}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["before"][1]["name"], "decode:1000:end")
+        self.assertEqual(payload["after"][1]["name"], "decode:1000:end")
+        self.assertEqual(payload["before"][1]["value"][0], 2999)
+        self.assertEqual(payload["after"][1]["value"][0], 3099)
+
+    def test_tooltip_rows_use_decode_and_prefill_colors(self):
+        script = f"""
+const {{chartTooltip}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(chartTooltip([
+  {{seriesId: "decode", seriesName: "Decode", marker: "●", value: [1000, 12]}},
+  {{seriesId: "prefill", seriesName: "Prefill", marker: "●", value: [1000, 34]}},
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertIn('echarts-tooltip-row series-decode', result.stdout)
+        self.assertIn('echarts-tooltip-row series-prefill', result.stdout)
+
+    def test_realtime_y_axis_ceiling_tracks_the_current_window(self):
+        script = f"""
+const {{realtimeYAxisCeiling}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify([
+  realtimeYAxisCeiling([{{decode: 143.5, prefill: 2047.9}}]),
+  realtimeYAxisCeiling([{{decode: 80, prefill: 500}}]),
+  realtimeYAxisCeiling([{{decode: 80, prefill: 3000}}]),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(json.loads(result.stdout), [2500, 500, 5000])
+
+    def test_historical_resolution_changes_do_not_animate_between_datasets(self):
+        script = f"""
+const {{historyAnimationEnabled}} = require({json.dumps(str(APP_JS))});
 process.stdout.write(JSON.stringify({{
-  day: historyAxisTicks(data, "day"),
-  realtime: historyAxisTicks(data, "realtime"),
+  realtime: historyAnimationEnabled("realtime"),
+  realtimeScaleChange: historyAnimationEnabled("realtime", true),
+  day: historyAnimationEnabled("day"),
+  week: historyAnimationEnabled("week"),
+  month: historyAnimationEnabled("month"),
 }}));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        labels = json.loads(result.stdout)
         self.assertEqual(
-            [tick["label"] for tick in labels["day"]],
-            ["00:00", "06:00", "12:00", "18:00", "24:00"],
-        )
-        self.assertEqual(len(labels["realtime"]), 5)
-        self.assertTrue(
-            all(tick["label"].count(":") == 2 for tick in labels["realtime"])
+            json.loads(result.stdout),
+            {
+                "realtime": True,
+                "realtimeScaleChange": False,
+                "day": False,
+                "week": False,
+                "month": False,
+            },
         )
 
-    def test_day_axis_uses_real_elapsed_time_across_dst(self):
+    def test_preset_window_clamps_to_period_end(self):
         script = f"""
-const {{historyAxisTicks}} = require({json.dumps(str(APP_JS))});
-const start = new Date(2026, 2, 8, 0, 0, 0).getTime();
-const end = new Date(2026, 2, 9, 0, 0, 0).getTime();
-process.stdout.write(JSON.stringify(historyAxisTicks({{start_ms: start, end_ms: end}}, "day")));
+const {{presetHistoryViewport}} = require({json.dumps(str(APP_JS))});
+const period = {{start_ms: 1000, end_ms: 11000}};
+process.stdout.write(JSON.stringify([
+  presetHistoryViewport(period, 4000, 9000),
+  presetHistoryViewport(period, 4000, 20000),
+  presetHistoryViewport(period, null, 9000),
+]));
 """
         result = subprocess.run(
-            ["node", "-e", script],
-            check=True,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "TZ": "America/New_York"},
+            ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        labels = [tick["label"] for tick in json.loads(result.stdout)]
-        self.assertEqual(labels, ["00:00", "06:45", "12:30", "18:15", "24:00"])
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                {"start_ms": 5000, "end_ms": 9000},
+                {"start_ms": 7000, "end_ms": 11000},
+                None,
+            ],
+        )
+
+    def test_preset_window_never_extends_beyond_available_current_period(self):
+        script = f"""
+const {{presetHistoryViewport}} = require({json.dumps(str(APP_JS))});
+const hour = 60 * 60 * 1000;
+const period = {{start_ms: 0, end_ms: 24 * hour}};
+process.stdout.write(JSON.stringify(
+  presetHistoryViewport(period, 12 * hour, 8 * hour)
+));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout), {"start_ms": 0, "end_ms": 8 * 60 * 60 * 1000}
+        )
 
     def test_history_delete_range_includes_whole_end_date(self):
         script = f"""

@@ -347,10 +347,19 @@ generation options, direct configuration saving, history management, and NInfer 
   line.
 - Plots live, calendar-day, calendar-week, and calendar-month throughput. Hover over a curve,
   or tap it on a touch device, to inspect the nearest plotted sample or aggregate point's local
-  time, decode rate, and prefill rate.
-- Keeps raw two-second history for the latest five minutes and stores peak-preserving average
-  aggregates in `ninfer_ui/history.sqlite3`. Aggregate history survives UI and NInfer restarts,
-  and records older than 400 days are removed automatically.
+  time, decode rate, and prefill rate. Live two-second samples use sample-and-hold steps and keep
+  collection gaps disconnected instead of interpolating them with diagonal lines. Stable sample
+  identities keep existing points moving left; the Y-axis follows the current five-minute window
+  and switches scale without vertical interpolation when its ceiling changes.
+- The weekly axis always spans Monday through Sunday and labels the full view by weekday. Zooming
+  to two days or less adds the local time to each weekday label; future intervals remain blank.
+- Calendar history replaces coarse and detailed datasets atomically during zoom instead of
+  morphing between different point counts and timestamps.
+- Keeps raw two-second history for the latest five minutes and stores one-minute average and peak
+  aggregates in `ninfer_ui/history.sqlite3`. Calendar overviews use bounded coarse buckets, while
+  zoomed windows automatically load finer aggregates. Averages are rendered as bucket intervals;
+  peaks remain available in tooltips instead of appearing as dense dots or misleading lines. Aggregate
+  history survives UI and NInfer restarts, and records older than 400 days are removed automatically.
 
 ### Configuration and service control
 

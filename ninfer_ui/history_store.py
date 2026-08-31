@@ -10,12 +10,16 @@ from typing import Any
 
 RANGES = {
     "realtime": {"window_ms": 5 * 60_000, "bucket_ms": 2_000, "label": "最近5分钟 · 2秒采样"},
-    "day": {"bucket_ms": 5 * 60_000, "label": "自然日 · 5分钟峰值保真"},
-    "week": {"bucket_ms": 30 * 60_000, "label": "自然周 · 30分钟峰值保真"},
-    "month": {"bucket_ms": 2 * 60 * 60_000, "label": "自然月 · 2小时峰值保真"},
+    "day": {"bucket_ms": 5 * 60_000, "label": "自然日 · 均值与峰值分离"},
+    "week": {"bucket_ms": 10 * 60_000, "label": "自然周 · 均值与峰值分离"},
+    "month": {"bucket_ms": 2 * 60 * 60_000, "label": "自然月 · 均值与峰值分离"},
 }
 AGGREGATE_RETENTION_MS = 400 * 24 * 60 * 60_000
 COMPLETED_REQUEST_LIMIT = 50
+MAX_DETAIL_BUCKETS = 1_440
+DETAIL_BUCKETS_MS = tuple(
+    minutes * 60_000 for minutes in (1, 2, 5, 10, 15, 30, 60, 120, 240, 360, 720, 1_440)
+)
 
 
 def _calendar_range(period: str, anchor_ms: int) -> tuple[int, int, str]:
@@ -283,7 +287,14 @@ class HistoryStore:
         start_ms, end_ms = _calendar_date_range(start_value, end_value)
         return self.clear_range(start_ms, end_ms)
 
-    def query(self, period: str, now_ms: int, anchor_ms: int | None = None) -> dict[str, Any]:
+    def query(
+        self,
+        period: str,
+        now_ms: int,
+        anchor_ms: int | None = None,
+        detail_start_ms: int | None = None,
+        detail_end_ms: int | None = None,
+    ) -> dict[str, Any]:
         if period not in RANGES:
             raise ValueError(f"不支持的时间范围: {period}")
         if now_ms <= 0:
@@ -297,6 +308,30 @@ class HistoryStore:
             period_label = "最近5分钟"
         else:
             start_ms, end_ms, period_label = _calendar_range(period, anchor_ms or now_ms)
+        is_current_period = period != "realtime" and start_ms <= now_ms < end_ms
+        available_end_ms = min(end_ms, now_ms) if is_current_period else end_ms
+        detail_requested = detail_start_ms is not None or detail_end_ms is not None
+        detail_reset = False
+        if (
+            detail_requested
+            and anchor_ms is None
+            and detail_start_ms is not None
+            and detail_end_ms is not None
+            and detail_end_ms <= start_ms
+        ):
+            detail_start_ms = None
+            detail_end_ms = None
+            detail_requested = False
+            detail_reset = True
+        if detail_requested:
+            if period == "realtime":
+                raise ValueError("实时范围不支持历史明细窗口")
+            if detail_start_ms is None or detail_end_ms is None:
+                raise ValueError("历史明细窗口必须同时提供开始和结束时间")
+            if detail_start_ms < start_ms or detail_end_ms > available_end_ms:
+                raise ValueError("历史明细窗口超出当前周期")
+            if detail_end_ms <= detail_start_ms:
+                raise ValueError("历史明细窗口结束时间必须晚于开始时间")
         with self._connect() as connection:
             if period == "realtime":
                 rows = connection.execute(
@@ -308,9 +343,14 @@ class HistoryStore:
                     """,
                     (start_ms, now_ms),
                 ).fetchall()
+                samples = [
+                    {"timestamp_ms": row[0], "decode": row[1], "prefill": row[2]}
+                    for row in rows
+                ]
+                overview_samples = samples
+                sample_bucket_ms = config["bucket_ms"]
             else:
-                bucket_ms = config["bucket_ms"]
-                minute_rows = connection.execute(
+                overview_rows = connection.execute(
                     """
                     SELECT bucket_ms, decode_sum, prefill_sum, sample_count,
                            decode_peak, decode_peak_ms, prefill_peak, prefill_peak_ms
@@ -318,31 +358,73 @@ class HistoryStore:
                     WHERE bucket_ms >= ? AND bucket_ms < ?
                     ORDER BY bucket_ms
                     """,
-                    (start_ms, end_ms),
+                    (start_ms, available_end_ms),
                 ).fetchall()
-                rows = self._compress_with_peaks(
-                    minute_rows, start_ms, end_ms, bucket_ms
+                overview_samples = self._aggregate_with_peaks(
+                    overview_rows, start_ms, available_end_ms, config["bucket_ms"]
                 )
+                if detail_requested:
+                    assert detail_start_ms is not None and detail_end_ms is not None
+                    sample_bucket_ms = self._detail_bucket_ms(
+                        detail_end_ms - detail_start_ms
+                    )
+                    query_start_ms = max(start_ms, detail_start_ms // 60_000 * 60_000)
+                    query_end_ms = min(
+                        available_end_ms,
+                        (detail_end_ms + 59_999) // 60_000 * 60_000,
+                    )
+                    detail_rows = connection.execute(
+                        """
+                        SELECT bucket_ms, decode_sum, prefill_sum, sample_count,
+                               decode_peak, decode_peak_ms, prefill_peak, prefill_peak_ms
+                        FROM throughput_minute
+                        WHERE bucket_ms >= ? AND bucket_ms < ?
+                        ORDER BY bucket_ms
+                        """,
+                        (query_start_ms, query_end_ms),
+                    ).fetchall()
+                    samples = self._aggregate_with_peaks(
+                        detail_rows,
+                        query_start_ms,
+                        query_end_ms,
+                        sample_bucket_ms,
+                    )
+                else:
+                    samples = overview_samples
+                    sample_bucket_ms = config["bucket_ms"]
         return {
             "range": period,
             "label": config["label"],
             "period_label": period_label,
             "period_anchor_ms": start_ms,
-            "is_current_period": start_ms <= now_ms < end_ms,
+            "is_current_period": is_current_period,
             "bucket_ms": config["bucket_ms"],
             "compression": "raw" if period == "realtime" else "average_peak_envelope",
             "start_ms": start_ms,
             "end_ms": end_ms,
-            "samples": [
-                {"timestamp_ms": row[0], "decode": row[1], "prefill": row[2]}
-                for row in rows
-            ],
+            "available_end_ms": available_end_ms,
+            "sample_bucket_ms": sample_bucket_ms,
+            "detail_start_ms": detail_start_ms,
+            "detail_end_ms": detail_end_ms,
+            "detail_reset": detail_reset,
+            "samples": samples,
+            "overview_samples": overview_samples,
         }
 
     @staticmethod
-    def _compress_with_peaks(
+    def _detail_bucket_ms(duration_ms: int) -> int:
+        if duration_ms <= 0:
+            raise ValueError("历史明细窗口时长必须为正数")
+        minimum = (duration_ms + MAX_DETAIL_BUCKETS - 1) // MAX_DETAIL_BUCKETS
+        for bucket_ms in DETAIL_BUCKETS_MS:
+            if bucket_ms >= minimum:
+                return bucket_ms
+        return DETAIL_BUCKETS_MS[-1]
+
+    @staticmethod
+    def _aggregate_with_peaks(
         rows: list[tuple[Any, ...]], start_ms: int, end_ms: int, bucket_ms: int
-    ) -> list[tuple[int, float, float]]:
+    ) -> list[dict[str, float | int]]:
         groups: dict[int, dict[str, float | int]] = {}
         for row in rows:
             group_start = ((int(row[0]) - start_ms) // bucket_ms) * bucket_ms + start_ms
@@ -368,28 +450,26 @@ class HistoryStore:
                 group["prefill_peak"] = float(row[6])
                 group["prefill_peak_ms"] = int(row[7])
 
-        compressed: list[tuple[int, float, float]] = []
+        aggregated: list[dict[str, float | int]] = []
         for group_start, group in groups.items():
             count = int(group["count"])
             if count <= 0:
                 raise ValueError("历史聚合样本数必须为正数")
             decode_average = float(group["decode_sum"]) / count
             prefill_average = float(group["prefill_sum"]) / count
-            group_end = min(end_ms - 1, group_start + bucket_ms - 1)
-            points: dict[int, list[float]] = {
-                group_start: [decode_average, prefill_average],
-                group_end: [decode_average, prefill_average],
-            }
-            decode_peak_ms = min(group_end, max(group_start, int(group["decode_peak_ms"])))
-            prefill_peak_ms = min(group_end, max(group_start, int(group["prefill_peak_ms"])))
-            points.setdefault(decode_peak_ms, [decode_average, prefill_average])[0] = float(
-                group["decode_peak"]
+            group_end = min(end_ms, group_start + bucket_ms)
+            decode_peak_ms = min(group_end - 1, max(group_start, int(group["decode_peak_ms"])))
+            prefill_peak_ms = min(group_end - 1, max(group_start, int(group["prefill_peak_ms"])))
+            aggregated.append(
+                {
+                    "timestamp_ms": group_start,
+                    "bucket_end_ms": group_end,
+                    "decode": decode_average,
+                    "prefill": prefill_average,
+                    "decode_peak": float(group["decode_peak"]),
+                    "decode_peak_ms": decode_peak_ms,
+                    "prefill_peak": float(group["prefill_peak"]),
+                    "prefill_peak_ms": prefill_peak_ms,
+                }
             )
-            points.setdefault(prefill_peak_ms, [decode_average, prefill_average])[1] = float(
-                group["prefill_peak"]
-            )
-            compressed.extend(
-                (timestamp_ms, values[0], values[1])
-                for timestamp_ms, values in sorted(points.items())
-            )
-        return compressed
+        return aggregated

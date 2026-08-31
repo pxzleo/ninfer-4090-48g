@@ -16,6 +16,18 @@ class RequestEventsTest(unittest.TestCase):
     def setUp(self) -> None:
         server_module.REQUEST_BACKFILL_COMPLETE = False
 
+    def test_security_policy_allows_local_chart_runtime_layout_styles(self) -> None:
+        handler = server_module.UiHandler.__new__(server_module.UiHandler)
+        headers = {}
+        handler.send_header = lambda name, value: headers.__setitem__(name, value)
+
+        handler._security_headers()
+
+        policy = headers["Content-Security-Policy"]
+        self.assertIn("style-src 'self'", policy)
+        self.assertIn("style-src-attr 'unsafe-inline'", policy)
+        self.assertIn("script-src 'self'", policy)
+
     @patch.object(server_module, "LAN_API_OVERRIDE", "http://192.168.100.149:8080/v1")
     def test_lan_api_override_is_used_verbatim(self) -> None:
         self.assertEqual(lan_api_url(), "http://192.168.100.149:8080/v1")

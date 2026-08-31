@@ -120,7 +120,7 @@ class HistoryStoreTest(unittest.TestCase):
 
         self.assertEqual(deleted["aggregate_rows"], 1)
         self.assertEqual(self.store.query("day", first["start_ms"])["samples"], [])
-        self.assertTrue(self.store.query("day", second["start_ms"])["samples"])
+        self.assertTrue(self.store.query("day", second["start_ms"] + 120_000)["samples"])
 
     def test_clear_dates_uses_server_local_calendar_boundaries(self) -> None:
         with local_timezone("America/New_York"):
@@ -134,7 +134,9 @@ class HistoryStoreTest(unittest.TestCase):
 
             self.assertEqual(deleted["aggregate_rows"], 1)
             self.assertEqual(self.store.query("day", selected["start_ms"])["samples"], [])
-            self.assertTrue(self.store.query("day", selected["end_ms"])["samples"])
+            self.assertTrue(
+                self.store.query("day", selected["end_ms"] + 120_000)["samples"]
+            )
 
     def test_day_uses_weighted_five_minute_buckets(self) -> None:
         now = 1_800_000_000_000
@@ -144,11 +146,11 @@ class HistoryStoreTest(unittest.TestCase):
 
         result = self.store.query("day", now + 120_000)
 
-        self.assertEqual(len(result["samples"]), 3)
+        self.assertEqual(len(result["samples"]), 1)
         self.assertEqual(result["samples"][0]["decode"], 20.0)
         self.assertEqual(result["samples"][0]["prefill"], 200.0)
-        self.assertEqual(max(row["decode"] for row in result["samples"]), 30.0)
-        self.assertEqual(max(row["prefill"] for row in result["samples"]), 300.0)
+        self.assertEqual(result["samples"][0]["decode_peak"], 30.0)
+        self.assertEqual(result["samples"][0]["prefill_peak"], 300.0)
 
     def test_day_preserves_short_peak_when_compressed(self) -> None:
         now = 1_800_000_000_000
@@ -159,8 +161,73 @@ class HistoryStoreTest(unittest.TestCase):
 
         result = self.store.query("day", now + 180_000)
 
-        self.assertEqual(max(row["decode"] for row in result["samples"]), 120.0)
-        self.assertEqual(max(row["prefill"] for row in result["samples"]), 2400.0)
+        self.assertEqual(max(row["decode_peak"] for row in result["samples"]), 120.0)
+        self.assertEqual(max(row["prefill_peak"] for row in result["samples"]), 2400.0)
+
+    def test_zoomed_history_uses_minute_detail_without_inventing_line_peaks(self) -> None:
+        period = self.store.query("month", 1_800_000_000_000)
+        first = period["start_ms"] + 60_000
+        self.store.record(first + 1_000, 10.0, 100.0)
+        self.store.record(first + 61_000, 120.0, 2400.0)
+
+        result = self.store.query(
+            "month",
+            1_800_000_000_000,
+            None,
+            first,
+            first + 2 * 60_000,
+        )
+
+        self.assertEqual(result["sample_bucket_ms"], 60_000)
+        self.assertEqual(len(result["samples"]), 2)
+        self.assertEqual(result["samples"][0]["decode"], 10.0)
+        self.assertEqual(result["samples"][1]["decode"], 120.0)
+        self.assertEqual(result["samples"][1]["prefill_peak"], 2400.0)
+        self.assertLess(len(result["overview_samples"]), len(result["samples"]))
+
+    def test_current_calendar_range_stops_at_query_time(self) -> None:
+        now = 1_800_000_123_456
+        self.store.record(now - 60_000, 12.0, 24.0)
+
+        result = self.store.query("month", now)
+
+        self.assertTrue(result["is_current_period"])
+        self.assertEqual(result["available_end_ms"], now)
+        self.assertLessEqual(
+            max(row["timestamp_ms"] for row in result["samples"]), now
+        )
+
+    def test_current_period_recovers_from_previous_period_detail_window(self) -> None:
+        day_ms = 24 * 60 * 60_000
+        first_now = 1_800_000_123_456
+        first = self.store.query("day", first_now)
+        next_now = first["end_ms"] + 60_000
+
+        result = self.store.query(
+            "day",
+            next_now,
+            None,
+            first["end_ms"] - 2 * 60 * 60_000,
+            first["end_ms"],
+        )
+
+        self.assertTrue(result["detail_reset"])
+        self.assertIsNone(result["detail_start_ms"])
+        self.assertEqual(result["start_ms"], first["end_ms"])
+        self.assertLess(result["end_ms"] - result["start_ms"], day_ms + 60 * 60_000)
+
+    def test_explicit_period_rejects_out_of_range_detail_window(self) -> None:
+        now = 1_800_000_123_456
+        period = self.store.query("day", now)
+
+        with self.assertRaisesRegex(ValueError, "超出当前周期"):
+            self.store.query(
+                "day",
+                now,
+                period["start_ms"],
+                period["start_ms"] - 60_000,
+                period["start_ms"],
+            )
 
     def test_existing_average_table_migrates_before_peak_samples(self) -> None:
         path = Path(self.temporary.name) / "legacy.sqlite3"
@@ -181,8 +248,8 @@ class HistoryStoreTest(unittest.TestCase):
         store.record(timestamp + 61_000, 120.0, 2400.0)
         result = store.query("day", timestamp + 180_000)
 
-        self.assertEqual(max(row["decode"] for row in result["samples"]), 120.0)
-        self.assertEqual(max(row["prefill"] for row in result["samples"]), 2400.0)
+        self.assertEqual(max(row["decode_peak"] for row in result["samples"]), 120.0)
+        self.assertEqual(max(row["prefill_peak"] for row in result["samples"]), 2400.0)
         with sqlite3.connect(path) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(throughput_minute)")}
         self.assertTrue(
@@ -222,6 +289,8 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(start, datetime(2026, 8, 17, tzinfo=zone))
         self.assertEqual(end, datetime(2026, 8, 24, tzinfo=zone))
         self.assertEqual(result["period_label"], "2026年8月17日–2026年8月23日")
+        self.assertEqual(result["bucket_ms"], 10 * 60_000)
+        self.assertEqual(result["sample_bucket_ms"], 10 * 60_000)
 
     def test_month_runs_from_first_day_to_next_month(self) -> None:
         zone = datetime.now().astimezone().tzinfo

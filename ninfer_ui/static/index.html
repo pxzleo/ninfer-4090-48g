@@ -8,6 +8,7 @@
     <title>NInfer Control</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/echarts.min.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body>
@@ -131,22 +132,8 @@
                 </div>
               </div>
               <div class="chart-wrap">
-                <svg id="throughput-chart" viewBox="0 0 900 240" preserveAspectRatio="none" role="img" aria-label="吞吐趋势图" data-i18n-aria="trend.chart">
-                  <g class="chart-grid"></g>
-                  <path class="area area-prefill" id="prefill-area"></path>
-                  <path class="line line-prefill" id="prefill-line"></path>
-                  <path class="area area-decode" id="decode-area"></path>
-                  <path class="line line-decode" id="decode-line"></path>
-                </svg>
-                <div class="chart-cursor" id="chart-cursor" hidden></div>
-                <div class="chart-tooltip" id="chart-tooltip" role="status" hidden>
-                  <time id="chart-tooltip-time">—</time>
-                  <div><span><i class="legend-decode"></i><b data-i18n="metric.decode">解码</b></span><strong id="chart-tooltip-decode">—</strong></div>
-                  <div><span><i class="legend-prefill"></i><b data-i18n="metric.prefill">预填充</b></span><strong id="chart-tooltip-prefill">—</strong></div>
-                </div>
-                <div class="chart-axis">
-                  <span>—</span><span>—</span><span>—</span><span>—</span><span>—</span>
-                </div>
+                <div id="throughput-chart" role="img" aria-label="吞吐趋势图" data-i18n-aria="trend.chart"></div>
+                <div class="chart-library-error" id="chart-library-error" role="alert" hidden data-i18n="trend.chartUnavailable">图表组件加载失败</div>
               </div>
             </div>
 
@@ -280,7 +267,7 @@
 
                 <fieldset class="history-management">
                   <legend data-i18n="history.title">历史数据管理</legend>
-                  <p class="history-retention" data-i18n="history.retention">5 分钟级“均值 + 峰值”历史保存在本机 SQLite 数据库中，打开网页、重启 UI 或启停 NInfer 都会继续读取；保留最近 400 天，超过后自动清理。</p>
+                  <p class="history-retention" data-i18n="history.retention">1 分钟级“均值 + 峰值”历史保存在本机 SQLite 数据库中，打开网页、重启 UI 或启停 NInfer 都会继续读取；保留最近 400 天，超过后自动清理。</p>
                   <div class="history-delete-grid">
                     <label><span data-i18n="history.startDate">开始日期</span><input id="history-delete-start" type="date"></label>
                     <label><span data-i18n="history.endDate">结束日期</span><input id="history-delete-end" type="date"></label>
