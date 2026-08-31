@@ -927,19 +927,65 @@ function chartAxisLabel(timestamp) {
 function chartTooltip(params) {
   const points = params.filter(item => Array.isArray(item.value) && item.value[1] != null);
   if (!points.length) return "";
-  const rows = points.flatMap(item => {
-    const seriesClass = item.seriesId === "decode"
-      ? " series-decode"
-      : item.seriesId === "prefill" ? " series-prefill" : "";
-    if (item.value.length < 4) {
-      return [`<div class="echarts-tooltip-row${seriesClass}"><span>${item.marker}${item.seriesName}</span><strong>${number(item.value[1], 1)} tok/s</strong></div>`];
-    }
-    return [
-      `<div class="echarts-tooltip-row${seriesClass}"><span>${item.marker}${item.seriesName} ${t("trend.average")}</span><strong>${number(item.value[1], 1)} tok/s</strong></div>`,
-      `<div class="echarts-tooltip-row${seriesClass}"><span>${item.seriesName} ${t("trend.peak")} · ${chartTimestamp(Number(item.value[3]), true)}</span><strong>${number(item.value[2], 1)} tok/s</strong></div>`,
-    ];
-  }).join("");
+  const pointBySeries = new Map(points.map(item => [item.seriesId, item]));
+  const metricValue = item => {
+    const value = Number(item?.value?.[1]);
+    return Number.isFinite(value) ? Math.max(0, value) : null;
+  };
+  const decode = pointBySeries.get("decode");
+  const prefill = pointBySeries.get("prefill");
+  const decodeValue = metricValue(decode);
+  const prefillValue = metricValue(prefill);
+  if (!(decodeValue > 0 || prefillValue > 0)) return "";
+  const row = (item, key, label, value) => {
+    const displayValue = value === null ? "—" : `${number(value, 1)} tok/s`;
+    return `<div class="echarts-tooltip-row series-${key}"><span>${item?.marker || ""}${label}</span><strong>${displayValue}</strong></div>`;
+  };
+  const rows = [
+    row(decode, "decode", t("metric.decode"), decodeValue),
+    row(prefill, "prefill", t("metric.prefill"), prefillValue),
+  ].join("");
   return `<time>${chartTimestamp(Number(points[0].value[0]), true)}</time>${rows}`;
+}
+
+function historyInsideZoom(percent) {
+  return {
+    id: "history-inside", type: "inside", xAxisIndex: 0, filterMode: "filter",
+    start: percent.start, end: percent.end, minValueSpan: 2 * 60_000,
+    zoomOnMouseWheel: "ctrl", moveOnMouseMove: true, moveOnMouseWheel: false,
+    preventDefaultMouseMove: false,
+  };
+}
+
+function preserveChartPageScroll(event) {
+  if (!event.ctrlKey) event.stopImmediatePropagation();
+}
+
+function createHalfSpeedPinchController(isEnabled) {
+  let lastDirection = 0;
+  let consumeNext = false;
+  const reset = () => {
+    lastDirection = 0;
+    consumeNext = false;
+  };
+  const handle = event => {
+    if (!isEnabled()) {
+      reset();
+      return;
+    }
+    const direction = event.pinchScale > 1 ? 1 : event.pinchScale < 1 ? -1 : 0;
+    if (!direction) return;
+    if (direction !== lastDirection) {
+      lastDirection = direction;
+      consumeNext = false;
+    }
+    // ECharts 6.1 applies a fixed 1.1 step per pinch event and checks this
+    // marker before zooming. Preserve the first event, then consume alternate
+    // events so continuous touch zoom runs at roughly half its native rate.
+    if (consumeNext) event.__ecRoamConsumed = true;
+    consumeNext = !consumeNext;
+  };
+  return { handle, reset };
 }
 
 function initializeHistoryChart() {
@@ -949,7 +995,17 @@ function initializeHistoryChart() {
     container.hidden = true;
     return;
   }
+  container.addEventListener("wheel", preserveChartPageScroll, {
+    capture: true, passive: true,
+  });
   state.historyChart = window.echarts.init(container, null, { renderer: "canvas" });
+  const pinchController = createHalfSpeedPinchController(
+    () => state.historyRange !== "realtime",
+  );
+  state.historyChart.getZr().on("pinch", pinchController.handle);
+  ["touchstart", "touchend", "touchcancel"].forEach(eventName => {
+    container.addEventListener(eventName, pinchController.reset, { passive: true });
+  });
   state.historyChart.on("datazoom", syncViewportFromChart);
   if (typeof ResizeObserver !== "undefined") {
     const observer = new ResizeObserver(() => state.historyChart?.resize());
@@ -1076,11 +1132,7 @@ function drawChart() {
     state.realtimeYAxisMax = nextYAxisMax;
   }
   const animationEnabled = historyAnimationEnabled(state.historyRange, realtimeScaleChanged);
-  const zoom = historical ? [{
-      id: "history-inside", type: "inside", xAxisIndex: 0, filterMode: "filter",
-      start: percent.start, end: percent.end, minValueSpan: 2 * 60_000,
-      zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false,
-    }] : [];
+  const zoom = historical ? [historyInsideZoom(percent)] : [];
   const seriesDefinitions = [
     { name: t("metric.decode"), key: "decode", color: "#76f0bd" },
     { name: t("metric.prefill"), key: "prefill", color: "#65a9ff" },
@@ -1122,8 +1174,10 @@ function drawChart() {
     grid: [mainGrid],
     tooltip: {
       trigger: "axis", confine: true, transitionDuration: .12,
+      className: "throughput-tooltip",
       backgroundColor: "rgba(12,17,15,.96)", borderColor: "#304039", borderWidth: 1,
-      padding: [11, 12], textStyle: { color: "#d4ded9", fontSize: 11 },
+      padding: [6, 8], textStyle: { color: "#d4ded9", fontSize: 10 },
+      extraCssText: "pointer-events:none;",
       axisPointer: { type: "line", lineStyle: { color: "rgba(206,222,214,.34)", width: 1 } },
       formatter: chartTooltip,
     },
@@ -1641,6 +1695,9 @@ if (typeof module !== "undefined") {
     slotStage,
     t,
     chartTooltip,
+    createHalfSpeedPinchController,
+    historyInsideZoom,
+    preserveChartPageScroll,
     throughputSeriesVisual,
   };
 }

@@ -719,19 +719,103 @@ process.stdout.write(JSON.stringify({{before, after}}));
         self.assertEqual(payload["before"][1]["value"][0], 2999)
         self.assertEqual(payload["after"][1]["value"][0], 3099)
 
-    def test_tooltip_rows_use_decode_and_prefill_colors(self):
+    def test_tooltip_is_three_compact_lines_and_hides_all_zero_values(self):
         script = f"""
 const {{chartTooltip}} = require({json.dumps(str(APP_JS))});
-process.stdout.write(chartTooltip([
-  {{seriesId: "decode", seriesName: "Decode", marker: "●", value: [1000, 12]}},
-  {{seriesId: "prefill", seriesName: "Prefill", marker: "●", value: [1000, 34]}},
-]));
+process.stdout.write(JSON.stringify({{
+  zero: chartTooltip([
+    {{seriesId: "decode", seriesName: "Decode", marker: "●", value: [1000, 0]}},
+    {{seriesId: "prefill", seriesName: "Prefill", marker: "●", value: [1000, 0]}},
+  ]),
+  active: chartTooltip([
+    {{seriesId: "decode", seriesName: "Decode", marker: "●", value: [1000, 0, 999, 888]}},
+    {{seriesId: "prefill", seriesName: "Prefill", marker: "●", value: [1000, 34, 2047.9, 999]}},
+  ]),
+}}));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        self.assertIn('echarts-tooltip-row series-decode', result.stdout)
-        self.assertIn('echarts-tooltip-row series-prefill', result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["zero"], "")
+        self.assertEqual(payload["active"].count("<time"), 1)
+        self.assertEqual(payload["active"].count('class="echarts-tooltip-row'), 2)
+        self.assertIn('echarts-tooltip-row series-decode', payload["active"])
+        self.assertIn('echarts-tooltip-row series-prefill', payload["active"])
+        self.assertIn("0 tok/s", payload["active"])
+        self.assertIn("34 tok/s", payload["active"])
+        self.assertNotIn("2047.9", payload["active"])
+        self.assertNotIn("999", payload["active"])
+
+    def test_history_zoom_preserves_page_scrolling(self):
+        script = f"""
+const {{historyInsideZoom, preserveChartPageScroll}} = require({json.dumps(str(APP_JS))});
+const stopped = [];
+preserveChartPageScroll({{ctrlKey: false, stopImmediatePropagation: () => stopped.push("plain")}});
+preserveChartPageScroll({{ctrlKey: true, stopImmediatePropagation: () => stopped.push("ctrl")}});
+process.stdout.write(JSON.stringify({{
+  zoom: historyInsideZoom({{start: 10, end: 80}}),
+  stopped,
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "zoom": {
+                    "id": "history-inside",
+                    "type": "inside",
+                    "xAxisIndex": 0,
+                    "filterMode": "filter",
+                    "start": 10,
+                    "end": 80,
+                    "minValueSpan": 120_000,
+                    "zoomOnMouseWheel": "ctrl",
+                    "moveOnMouseMove": True,
+                    "moveOnMouseWheel": False,
+                    "preventDefaultMouseMove": False,
+                },
+                "stopped": ["plain"],
+            },
+        )
+
+    def test_touch_pinch_zoom_runs_at_half_rate(self):
+        script = f"""
+const {{createHalfSpeedPinchController}} = require({json.dumps(str(APP_JS))});
+let enabled = true;
+const controller = createHalfSpeedPinchController(() => enabled);
+const events = [1.2, 1.3, 1.1, 0.8, 0.7].map(pinchScale => ({{pinchScale}}));
+events.forEach(controller.handle);
+controller.reset();
+const nextGesture = {{pinchScale: 0.8}};
+controller.handle(nextGesture);
+enabled = false;
+const disabled = {{pinchScale: 1.2}};
+controller.handle(disabled);
+enabled = true;
+const reenabled = {{pinchScale: 1.2}};
+controller.handle(reenabled);
+process.stdout.write(JSON.stringify({{
+  consumed: events.map(event => event.__ecRoamConsumed === true),
+  nextGesture: nextGesture.__ecRoamConsumed === true,
+  disabled: disabled.__ecRoamConsumed === true,
+  reenabled: reenabled.__ecRoamConsumed === true,
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "consumed": [False, True, False, False, True],
+                "nextGesture": False,
+                "disabled": False,
+                "reenabled": False,
+            },
+        )
 
     def test_realtime_y_axis_ceiling_tracks_the_current_window(self):
         script = f"""
