@@ -434,11 +434,14 @@ dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
   .support-metrics > div:nth-child(odd) { border-left: 0; padding-left: 0; }
   .support-metrics strong { font-size: 26px; }
   .trend-panel .panel-heading { align-items: stretch; flex-direction: column; }
-  .trend-tools { width: 100%; grid-template-columns: 1fr; justify-items: start; gap: 12px; }
-  .trend-tools .legend { grid-column: 1; }
-  .range-switch { width: fit-content; }
+  .trend-tools { width: 100%; grid-template-columns: minmax(0, 1fr) auto; align-items: center; justify-items: stretch; gap: 12px 10px; }
+  .range-switch { grid-column: 1; grid-row: 1; width: 100%; }
+  .range-switch button { min-width: 0; flex: 1; padding-inline: 4px; }
+  .trend-tools .legend { grid-column: 2; grid-row: 1; justify-self: end; gap: 10px; white-space: nowrap; }
+  .trend-tools .legend span { gap: 4px; }
+  .trend-tools .legend i { width: 10px; }
   .range-switch button, .period-nav button { min-height: 44px; }
-  .period-nav { width: 100%; min-width: 0; }
+  .period-nav { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; }
   .period-nav span { min-width: 0; }
   #throughput-chart { height: 300px; }
   .slots-panel .panel-heading { align-items: stretch; flex-direction: column; }
