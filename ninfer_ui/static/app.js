@@ -952,13 +952,9 @@ function historyInsideZoom(percent) {
   return {
     id: "history-inside", type: "inside", xAxisIndex: 0, filterMode: "filter",
     start: percent.start, end: percent.end, minValueSpan: 2 * 60_000,
-    zoomOnMouseWheel: "ctrl", moveOnMouseMove: true, moveOnMouseWheel: false,
+    zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false,
     preventDefaultMouseMove: false,
   };
-}
-
-function preserveChartPageScroll(event) {
-  if (!event.ctrlKey) event.stopImmediatePropagation();
 }
 
 function createHalfSpeedPinchController(isEnabled) {
@@ -995,9 +991,6 @@ function initializeHistoryChart() {
     container.hidden = true;
     return;
   }
-  container.addEventListener("wheel", preserveChartPageScroll, {
-    capture: true, passive: true,
-  });
   state.historyChart = window.echarts.init(container, null, { renderer: "canvas" });
   const pinchController = createHalfSpeedPinchController(
     () => state.historyRange !== "realtime",
@@ -1697,7 +1690,6 @@ if (typeof module !== "undefined") {
     chartTooltip,
     createHalfSpeedPinchController,
     historyInsideZoom,
-    preserveChartPageScroll,
     throughputSeriesVisual,
   };
 }

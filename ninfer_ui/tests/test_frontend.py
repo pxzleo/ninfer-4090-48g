@@ -747,16 +747,10 @@ process.stdout.write(JSON.stringify({{
         self.assertNotIn("2047.9", payload["active"])
         self.assertNotIn("999", payload["active"])
 
-    def test_history_zoom_preserves_page_scrolling(self):
+    def test_history_zoom_uses_the_mouse_wheel(self):
         script = f"""
-const {{historyInsideZoom, preserveChartPageScroll}} = require({json.dumps(str(APP_JS))});
-const stopped = [];
-preserveChartPageScroll({{ctrlKey: false, stopImmediatePropagation: () => stopped.push("plain")}});
-preserveChartPageScroll({{ctrlKey: true, stopImmediatePropagation: () => stopped.push("ctrl")}});
-process.stdout.write(JSON.stringify({{
-  zoom: historyInsideZoom({{start: 10, end: 80}}),
-  stopped,
-}}));
+const {{historyInsideZoom}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify(historyInsideZoom({{start: 10, end: 80}})));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
@@ -764,20 +758,17 @@ process.stdout.write(JSON.stringify({{
         self.assertEqual(
             json.loads(result.stdout),
             {
-                "zoom": {
-                    "id": "history-inside",
-                    "type": "inside",
-                    "xAxisIndex": 0,
-                    "filterMode": "filter",
-                    "start": 10,
-                    "end": 80,
-                    "minValueSpan": 120_000,
-                    "zoomOnMouseWheel": "ctrl",
-                    "moveOnMouseMove": True,
-                    "moveOnMouseWheel": False,
-                    "preventDefaultMouseMove": False,
-                },
-                "stopped": ["plain"],
+                "id": "history-inside",
+                "type": "inside",
+                "xAxisIndex": 0,
+                "filterMode": "filter",
+                "start": 10,
+                "end": 80,
+                "minValueSpan": 120_000,
+                "zoomOnMouseWheel": True,
+                "moveOnMouseMove": True,
+                "moveOnMouseWheel": False,
+                "preventDefaultMouseMove": False,
             },
         )
 
