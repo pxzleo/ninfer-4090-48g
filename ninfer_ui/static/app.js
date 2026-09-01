@@ -802,14 +802,10 @@ function historySeriesData(
   return result;
 }
 
-function realtimeYAxisCeiling(samples) {
+function realtimeYAxisCeiling(samples, key) {
   let observed = 0;
   for (const sample of samples) {
-    observed = Math.max(
-      observed,
-      Math.max(0, Number(sample.decode) || 0),
-      Math.max(0, Number(sample.prefill) || 0),
-    );
+    observed = Math.max(observed, Math.max(0, Number(sample[key]) || 0));
   }
   const exponent = 10 ** Math.floor(Math.log10(Math.max(1, observed)));
   const normalized = observed / exponent;
@@ -1117,23 +1113,28 @@ function drawChart() {
   const percent = historyViewportPercent(axisPeriod, viewport);
   const sampleBucketMs = state.historyMeta?.sample_bucket_ms ?? state.historyMeta?.bucket_ms ?? 2_000;
   const compressed = state.historyMeta?.compression === "average_peak_envelope";
-  let realtimeScaleChanged = false;
-  if (state.historyRange === "realtime") {
-    const nextYAxisMax = realtimeYAxisCeiling(state.history);
-    realtimeScaleChanged = state.realtimeYAxisMax !== null
-      && nextYAxisMax !== state.realtimeYAxisMax;
-    state.realtimeYAxisMax = nextYAxisMax;
-  }
-  const animationEnabled = historyAnimationEnabled(state.historyRange, realtimeScaleChanged);
-  const zoom = historical ? [historyInsideZoom(percent)] : [];
   const seriesDefinitions = [
     { name: t("metric.decode"), key: "decode", color: "#76f0bd" },
     { name: t("metric.prefill"), key: "prefill", color: "#65a9ff" },
   ];
-  const averageSeries = seriesDefinitions.map(item => ({
+  let realtimeScaleChanged = false;
+  if (state.historyRange === "realtime") {
+    const nextYAxisMax = Object.fromEntries(seriesDefinitions.map(
+      item => [item.key, realtimeYAxisCeiling(state.history, item.key)],
+    ));
+    realtimeScaleChanged = state.realtimeYAxisMax !== null
+      && seriesDefinitions.some(
+        item => nextYAxisMax[item.key] !== state.realtimeYAxisMax[item.key],
+      );
+    state.realtimeYAxisMax = nextYAxisMax;
+  }
+  const animationEnabled = historyAnimationEnabled(state.historyRange, realtimeScaleChanged);
+  const zoom = historical ? [historyInsideZoom(percent)] : [];
+  const averageSeries = seriesDefinitions.map((item, index) => ({
     id: item.key,
     name: item.name,
     type: "line",
+    yAxisIndex: index,
     data: historySeriesData(
       state.history, item.key, sampleBucketMs, periodStart, compressed,
       state.historyRange === "realtime",
@@ -1151,13 +1152,15 @@ function drawChart() {
     axisLabel: { color: "#738078", fontSize: 9, hideOverlap: true, formatter: chartAxisLabel },
     splitLine: { show: false },
   };
-  const mainYAxis = {
+  const mainYAxes = seriesDefinitions.map((item, index) => ({
     type: "value", min: 0,
-    ...(state.historyRange === "realtime" ? { max: state.realtimeYAxisMax } : {}),
+    ...(state.historyRange === "realtime" ? { max: state.realtimeYAxisMax[item.key] } : {}),
     splitNumber: 4,
     axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false },
-    splitLine: { lineStyle: { color: "rgba(255,255,255,.055)", width: 1 } },
-  };
+    splitLine: index === 0
+      ? { lineStyle: { color: "rgba(255,255,255,.055)", width: 1 } }
+      : { show: false },
+  }));
   state.historyChartSyncing = true;
   state.historyChart.setOption({
     animation: animationEnabled,
@@ -1175,7 +1178,7 @@ function drawChart() {
       formatter: chartTooltip,
     },
     xAxis: [mainXAxis],
-    yAxis: [mainYAxis],
+    yAxis: mainYAxes,
     dataZoom: zoom,
     series: averageSeries,
   }, { notMerge: true, lazyUpdate: false });

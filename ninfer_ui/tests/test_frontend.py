@@ -808,19 +808,26 @@ process.stdout.write(JSON.stringify({{
             },
         )
 
-    def test_realtime_y_axis_ceiling_tracks_the_current_window(self):
+    def test_realtime_y_axes_scale_decode_and_prefill_independently(self):
         script = f"""
 const {{realtimeYAxisCeiling}} = require({json.dumps(str(APP_JS))});
+const mixed = [{{decode: 143.5, prefill: 2047.9}}];
 process.stdout.write(JSON.stringify([
-  realtimeYAxisCeiling([{{decode: 143.5, prefill: 2047.9}}]),
-  realtimeYAxisCeiling([{{decode: 80, prefill: 500}}]),
-  realtimeYAxisCeiling([{{decode: 80, prefill: 3000}}]),
+  realtimeYAxisCeiling(mixed, "decode"),
+  realtimeYAxisCeiling(mixed, "prefill"),
+  realtimeYAxisCeiling([{{decode: 80, prefill: 500}}], "decode"),
+  realtimeYAxisCeiling([{{decode: 80, prefill: 500}}], "prefill"),
+  realtimeYAxisCeiling([{{decode: 80, prefill: 3000}}], "prefill"),
+  realtimeYAxisCeiling([], "decode"),
+  realtimeYAxisCeiling([{{decode: -10, prefill: 0}}], "decode"),
 ]));
 """
         result = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
         )
-        self.assertEqual(json.loads(result.stdout), [2500, 500, 5000])
+        self.assertEqual(
+            json.loads(result.stdout), [200, 2500, 100, 500, 5000, 1, 1]
+        )
 
     def test_historical_resolution_changes_do_not_animate_between_datasets(self):
         script = f"""
