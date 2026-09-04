@@ -9,7 +9,7 @@ from typing import Any
 
 
 RANGES = {
-    "realtime": {"window_ms": 5 * 60_000, "bucket_ms": 2_000, "label": "最近5分钟 · 2秒采样"},
+    "realtime": {"window_ms": 15 * 60_000, "bucket_ms": 2_000, "label": "最近15分钟 · 2秒采样"},
     "day": {"label": "自然日 · 均值与峰值分离"},
     "week": {"label": "自然周 · 均值与峰值分离"},
     "month": {"label": "自然月 · 均值与峰值分离"},
@@ -305,7 +305,7 @@ class HistoryStore:
         if period == "realtime":
             start_ms = now_ms - config["window_ms"]
             end_ms = now_ms
-            period_label = "最近5分钟"
+            period_label = "最近15分钟"
         else:
             start_ms, end_ms, period_label = _calendar_range(period, anchor_ms or now_ms)
         is_current_period = period != "realtime" and start_ms <= now_ms < end_ms

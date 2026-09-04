@@ -18,7 +18,7 @@ const I18N = {
     "overview.title": "实时运行", "overview.waitingModel": "等待模型信息", "overview.totals": "累计用量",
     "metric.requestsTotal": "累计请求", "metric.outputTotal": "累计输出", "metric.inputTotal": "累计输入", "metric.aggregateDecode": "聚合解码", "metric.waitingThroughput": "等待首个吞吐周期", "metric.prefill": "预填充", "metric.decode": "解码", "metric.runningQueued": "执行 / 排队", "metric.mtpAcceptance": "MTP 接受率", "metric.cumulative": "累计", "metric.cacheHitRate": "缓存命中率",
     "overview.model": "{model} · {context} 上下文 · 视觉能力：{vision}", "common.on": "开", "overview.window": "{seconds} 秒窗口 · {batch} 平均 batch", "overview.noActivity": "当前没有生成活动",
-    "trend.title": "吞吐趋势", "trend.defaultWindow": "服务端两秒执行窗口", "trend.range": "吞吐趋势时间范围", "trend.realtime": "实时", "trend.day": "天", "trend.week": "周", "trend.month": "月", "trend.previous": "上一周期", "trend.next": "下一周期", "trend.chart": "吞吐趋势图。历史范围可通过图内缩放调整。", "trend.chartUnavailable": "图表组件加载失败", "trend.realtimeLabel": "最近5分钟 · 2秒采样", "trend.dayLabel": "自然日 · 均值与峰值分离", "trend.weekLabel": "自然周 · 均值与峰值分离", "trend.monthLabel": "自然月 · 均值与峰值分离", "trend.average": "平均", "trend.peak": "峰值", "trend.lastFiveMinutes": "最近5分钟", "trend.previousNamed": "上一{period}", "trend.nextNamed": "下一{period}", "trend.period": "周期", "trend.loadFailed": "吞吐历史读取失败: {message}",
+    "trend.title": "吞吐趋势", "trend.defaultWindow": "服务端两秒执行窗口", "trend.range": "吞吐趋势时间范围", "trend.realtime": "实时", "trend.day": "天", "trend.week": "周", "trend.month": "月", "trend.previous": "上一周期", "trend.next": "下一周期", "trend.chart": "吞吐趋势图。历史范围可通过图内缩放调整。", "trend.chartUnavailable": "图表组件加载失败", "trend.realtimeLabel": "最近15分钟 · 2秒采样", "trend.dayLabel": "自然日 · 均值与峰值分离", "trend.weekLabel": "自然周 · 均值与峰值分离", "trend.monthLabel": "自然月 · 均值与峰值分离", "trend.average": "平均", "trend.peak": "峰值", "trend.lastFifteenMinutes": "最近15分钟", "trend.previousNamed": "上一{period}", "trend.nextNamed": "下一{period}", "trend.period": "周期", "trend.loadFailed": "吞吐历史读取失败: {message}",
     "slots.title": "执行槽", "slots.description": "执行阶段、上下文占用与推测解码状态", "slots.kvUsage": "总缓存占用", "slots.kvUnavailable": "缓存占用不可用", "slots.idleCached": "空闲 · 缓存已保留", "slots.idle": "空闲", "slots.prefillingProgress": "预填充中 · {progress}%", "slots.decodingRate": "解码中 · {rate} tok/s", "slots.decodingSampling": "解码中 · 采样中", "slots.processing": "处理中", "slots.prefilling": "预填充中", "slots.waiting": "等待调度", "slots.unavailable": "槽状态不可用",
     "gpu.utilization": "利用率", "gpu.memory": "显存", "gpu.power": "功耗", "gpu.clock": "SM 时钟", "gpu.unavailable": "GPU 状态不可用", "lan.title": "局域网连接", "lan.apiAddress": "API 地址", "lan.model": "模型名", "lan.waitingModel": "等待模型信息",
     "requests.title": "最近完成", "requests.refreshLogs": "刷新日志", "requests.request": "请求", "requests.finish": "结束", "requests.input": "输入", "requests.output": "输出", "requests.cacheHit": "缓存命中", "requests.duration": "耗时", "requests.empty": "尚无已完成请求", "requests.rawLogs": "原始服务日志", "requests.autoRefresh": "自动刷新 · 2 秒", "requests.notLoaded": "尚未加载", "requests.loading": "正在读取…", "requests.logEmpty": "日志为空", "requestDetail.kicker": "REQUEST INSPECTOR", "requestDetail.close": "关闭请求详情", "requestDetail.open": "打开请求 #{id} 详情", "requestDetail.completed": "已完成 · {time}", "requestDetail.completedAt": "完成时间", "requestDetail.wallTime": "端到端", "requestDetail.speculative": "推测解码", "requestDetail.rawRecord": "原始完成记录", "requestDetail.rawHint": "用于精确排障与核对", "requestDetail.cachedTokens": "{tokens} tokens 复用", "requestDetail.source": "请求来源", "requestDetail.sourceHint": "由连接地址和可选客户端标识组成", "requestDetail.remoteAddress": "来源地址", "requestDetail.clientId": "客户端标识", "requestDetail.agentId": "Agent 标识", "requestDetail.sessionId": "会话标识", "requestDetail.notProvided": "未提供",
@@ -37,7 +37,7 @@ const I18N = {
     "overview.title": "Live workload", "overview.waitingModel": "Waiting for model information", "overview.totals": "Cumulative usage",
     "metric.requestsTotal": "Total requests", "metric.outputTotal": "Total output", "metric.inputTotal": "Total input", "metric.aggregateDecode": "Aggregate decode", "metric.waitingThroughput": "Waiting for the first throughput interval", "metric.prefill": "Prefill", "metric.decode": "Decode", "metric.runningQueued": "Running / queued", "metric.mtpAcceptance": "MTP acceptance", "metric.cumulative": "Cumulative", "metric.cacheHitRate": "Cache hit rate",
     "overview.model": "{model} · {context} context · Vision: {vision}", "common.on": "On", "overview.window": "{seconds}s window · {batch} avg batch", "overview.noActivity": "No generation activity",
-    "trend.title": "Throughput trend", "trend.defaultWindow": "Two-second server execution window", "trend.range": "Throughput time range", "trend.realtime": "Live", "trend.day": "Day", "trend.week": "Week", "trend.month": "Month", "trend.previous": "Previous period", "trend.next": "Next period", "trend.chart": "Throughput trend chart. Adjust history with in-chart zoom.", "trend.chartUnavailable": "Chart component failed to load", "trend.realtimeLabel": "Last 5 minutes · 2-second samples", "trend.dayLabel": "Calendar day · separate averages and peaks", "trend.weekLabel": "Calendar week · separate averages and peaks", "trend.monthLabel": "Calendar month · separate averages and peaks", "trend.average": "average", "trend.peak": "peak", "trend.lastFiveMinutes": "Last 5 minutes", "trend.previousNamed": "Previous {period}", "trend.nextNamed": "Next {period}", "trend.period": "period", "trend.loadFailed": "Failed to load throughput history: {message}",
+    "trend.title": "Throughput trend", "trend.defaultWindow": "Two-second server execution window", "trend.range": "Throughput time range", "trend.realtime": "Live", "trend.day": "Day", "trend.week": "Week", "trend.month": "Month", "trend.previous": "Previous period", "trend.next": "Next period", "trend.chart": "Throughput trend chart. Adjust history with in-chart zoom.", "trend.chartUnavailable": "Chart component failed to load", "trend.realtimeLabel": "Last 15 minutes · 2-second samples", "trend.dayLabel": "Calendar day · separate averages and peaks", "trend.weekLabel": "Calendar week · separate averages and peaks", "trend.monthLabel": "Calendar month · separate averages and peaks", "trend.average": "average", "trend.peak": "peak", "trend.lastFifteenMinutes": "Last 15 minutes", "trend.previousNamed": "Previous {period}", "trend.nextNamed": "Next {period}", "trend.period": "period", "trend.loadFailed": "Failed to load throughput history: {message}",
     "slots.title": "Execution slots", "slots.description": "Execution stage, context usage, and speculative decoding state", "slots.kvUsage": "Total KV cache usage", "slots.kvUnavailable": "Cache usage unavailable", "slots.idleCached": "Idle · prefix retained", "slots.idle": "Idle", "slots.prefillingProgress": "Prefilling · {progress}%", "slots.decodingRate": "Decoding · {rate} tok/s", "slots.decodingSampling": "Decoding · sampling", "slots.processing": "Processing", "slots.prefilling": "Prefilling", "slots.waiting": "Waiting for scheduler", "slots.unavailable": "Slot status unavailable",
     "gpu.utilization": "Utilization", "gpu.memory": "VRAM", "gpu.power": "Power", "gpu.clock": "SM clock", "gpu.unavailable": "GPU status unavailable", "lan.title": "LAN connection", "lan.apiAddress": "API address", "lan.model": "Model", "lan.waitingModel": "Waiting for model information",
     "requests.title": "Recently completed", "requests.refreshLogs": "Refresh logs", "requests.request": "Request", "requests.finish": "Finish", "requests.input": "Input", "requests.output": "Output", "requests.cacheHit": "Cache hit", "requests.duration": "Duration", "requests.empty": "No completed requests", "requests.rawLogs": "Raw service logs", "requests.autoRefresh": "Auto-refresh · 2 seconds", "requests.notLoaded": "Not loaded", "requests.loading": "Loading…", "requests.logEmpty": "Log is empty", "requestDetail.kicker": "REQUEST INSPECTOR", "requestDetail.close": "Close request details", "requestDetail.open": "Open details for request #{id}", "requestDetail.completed": "Completed · {time}", "requestDetail.completedAt": "Completed at", "requestDetail.wallTime": "End to end", "requestDetail.speculative": "Speculative decode", "requestDetail.rawRecord": "Raw completion record", "requestDetail.rawHint": "Exact source for diagnostics and verification", "requestDetail.cachedTokens": "{tokens} tokens reused", "requestDetail.source": "Request source", "requestDetail.sourceHint": "Socket peer plus optional client identifiers", "requestDetail.remoteAddress": "Remote address", "requestDetail.clientId": "Client ID", "requestDetail.agentId": "Agent ID", "requestDetail.sessionId": "Session ID", "requestDetail.notProvided": "Not provided",
@@ -654,7 +654,7 @@ function historyAnimationEnabled(range, scaleChanged = false) {
 }
 
 function historyPeriodLabel(data, range) {
-  if (range === "realtime") return t("trend.lastFiveMinutes");
+  if (range === "realtime") return t("trend.lastFifteenMinutes");
   const start = new Date(Number(data.start_ms));
   const end = new Date(Number(data.end_ms) - 1);
   if (range === "day") {
@@ -811,6 +811,29 @@ function realtimeYAxisCeiling(samples, key) {
   const normalized = observed / exponent;
   const step = [1, 2, 2.5, 5, 10].find(candidate => normalized <= candidate) || 10;
   return step * exponent;
+}
+
+function decodeAxisTickLabel(value) {
+  const numeric = Number(value);
+  return numeric > 0 && numeric % 50 === 0 ? String(numeric) : "";
+}
+
+function throughputYAxes(seriesDefinitions, range, realtimeYAxisMax) {
+  return seriesDefinitions.map((item, index) => ({
+    type: "value", min: 0,
+    ...(range === "realtime"
+      ? { max: index === 0 ? Math.max(200, realtimeYAxisMax[item.key]) : realtimeYAxisMax[item.key] }
+      : index === 0 ? { max: value => Math.max(200, Math.ceil(value.max / 50) * 50) } : {}),
+    ...(index === 0 ? { position: "right", interval: 50 } : {}),
+    splitNumber: 4,
+    axisLabel: index === 0
+      ? { show: true, color: item.color, fontSize: 9, margin: 6, formatter: decodeAxisTickLabel }
+      : { show: false },
+    axisLine: { show: false }, axisTick: { show: false },
+    splitLine: index === 0
+      ? { lineStyle: { color: "rgba(255,255,255,.055)", width: 1 } }
+      : { show: false },
+  }));
 }
 
 function throughputSeriesVisual(color) {
@@ -1103,7 +1126,7 @@ function drawChart() {
   if (!state.historyChart) return;
   const fallbackEnd = Date.now();
   const availablePeriod = historyAvailablePeriod(state.historyMeta) || {
-    start_ms: fallbackEnd - 5 * 60_000, end_ms: fallbackEnd,
+    start_ms: fallbackEnd - 15 * 60_000, end_ms: fallbackEnd,
   };
   const historical = state.historyRange !== "realtime" && Boolean(state.historyMeta);
   const axisPeriod = historyAxisPeriod(state.historyMeta, state.historyRange) || availablePeriod;
@@ -1145,22 +1168,14 @@ function drawChart() {
     ...throughputSeriesVisual(item.color),
     emphasis: { disabled: true },
   }));
-  const mainGrid = { left: 0, right: 0, top: 12, bottom: 28, containLabel: false };
+  const mainGrid = { left: 0, right: 28, top: 12, bottom: 28, containLabel: false };
   const mainXAxis = {
     type: "time", min: periodStart, max: periodEnd, boundaryGap: false,
     axisLine: { lineStyle: { color: "#25302b" } }, axisTick: { show: false },
     axisLabel: { color: "#738078", fontSize: 9, hideOverlap: true, formatter: chartAxisLabel },
     splitLine: { show: false },
   };
-  const mainYAxes = seriesDefinitions.map((item, index) => ({
-    type: "value", min: 0,
-    ...(state.historyRange === "realtime" ? { max: state.realtimeYAxisMax[item.key] } : {}),
-    splitNumber: 4,
-    axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false },
-    splitLine: index === 0
-      ? { lineStyle: { color: "rgba(255,255,255,.055)", width: 1 } }
-      : { show: false },
-  }));
+  const mainYAxes = throughputYAxes(seriesDefinitions, state.historyRange, state.realtimeYAxisMax);
   state.historyChartSyncing = true;
   state.historyChart.setOption({
     animation: animationEnabled,
@@ -1692,6 +1707,8 @@ if (typeof module !== "undefined") {
     t,
     chartTooltip,
     createHalfSpeedPinchController,
+    decodeAxisTickLabel,
+    throughputYAxes,
     historyInsideZoom,
     throughputSeriesVisual,
   };

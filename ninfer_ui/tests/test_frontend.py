@@ -829,6 +829,45 @@ process.stdout.write(JSON.stringify([
             json.loads(result.stdout), [200, 2500, 100, 500, 5000, 1, 1]
         )
 
+    def test_decode_axis_shows_every_fifty_ticks(self):
+        script = f"""
+const {{throughputYAxes}} = require({json.dumps(str(APP_JS))});
+const definitions = [
+  {{key: "decode", color: "#76f0bd"}},
+  {{key: "prefill", color: "#65a9ff"}},
+];
+const realtime = throughputYAxes(definitions, "realtime", {{decode: 250, prefill: 2500}});
+const historical = throughputYAxes(definitions, "day", null);
+process.stdout.write(JSON.stringify({{
+  realtimeDecode: {{
+    max: realtime[0].max,
+    position: realtime[0].position,
+    interval: realtime[0].interval,
+    color: realtime[0].axisLabel.color,
+    labels: [0, 50, 100, 150, 200, 250, 275, 300].map(realtime[0].axisLabel.formatter),
+  }},
+  realtimePrefill: {{max: realtime[1].max, labelsVisible: realtime[1].axisLabel.show}},
+  historicalDecodeMax: historical[0].max({{max: 243}}),
+}}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "realtimeDecode": {
+                    "max": 250,
+                    "position": "right",
+                    "interval": 50,
+                    "color": "#76f0bd",
+                    "labels": ["", "50", "100", "150", "200", "250", "", "300"],
+                },
+                "realtimePrefill": {"max": 2500, "labelsVisible": False},
+                "historicalDecodeMax": 250,
+            },
+        )
+
     def test_historical_resolution_changes_do_not_animate_between_datasets(self):
         script = f"""
 const {{historyAnimationEnabled}} = require({json.dumps(str(APP_JS))});
