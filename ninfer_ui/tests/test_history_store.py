@@ -73,16 +73,19 @@ class HistoryStoreTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_realtime_keeps_only_five_minutes(self) -> None:
+    def test_realtime_keeps_only_fifteen_minutes(self) -> None:
         now = 1_800_000_000_000
-        self.store.record(now - 301_000, 10.0, 20.0)
+        self.store.record(now - 901_000, 10.0, 20.0)
+        self.store.record(now - 899_000, 20.0, 30.0)
         self.store.record(now - 2_000, 30.0, 40.0)
         self.store.record(now, 50.0, 60.0)
 
         result = self.store.query("realtime", now)
 
-        self.assertEqual([row["decode"] for row in result["samples"]], [30.0, 50.0])
-        self.assertEqual(result["label"], "最近5分钟 · 2秒采样")
+        self.assertEqual(
+            [row["decode"] for row in result["samples"]], [20.0, 30.0, 50.0]
+        )
+        self.assertEqual(result["label"], "最近15分钟 · 2秒采样")
 
     def test_aggregate_history_survives_reopen_within_retention(self) -> None:
         old = 1_700_000_000_000

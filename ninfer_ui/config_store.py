@@ -133,13 +133,17 @@ def parse_config(text: str) -> dict[str, Any]:
     if "--no-thinking" in flags and reasoning_language is not None:
         raise ConfigError("关闭思考时不能指定思考语言")
     spec = values.get("--spec", "off")
+    prefill_chunk = _required_int(values, "--prefill-chunk", 1024)
     return {
         "max_context": _required_int(values, "--max-context", 8192),
         "kv_capacity": values.get("--kv-capacity", values.get("--max-context", "8192")),
         "max_concurrency": _required_int(values, "--max-concurrency", 1),
         "max_pending_requests": _required_int(values, "--max-pending-requests", 16),
         "pending_timeout_ms": _required_int(values, "--pending-timeout-ms", 30_000),
-        "prefill_chunk": _required_int(values, "--prefill-chunk", 1024),
+        "prefill_chunk": prefill_chunk,
+        "prefill_chunk_when_decoding": _required_int(
+            values, "--prefill-chunk-when-decoding", min(prefill_chunk, 256)
+        ),
         "kv_dtype": values.get("--kv-dtype", "bf16"),
         "spec": spec,
         "draft_tokens": _required_int(values, "--draft-tokens", 3),
@@ -188,6 +192,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "max_pending_requests",
         "pending_timeout_ms",
         "prefill_chunk",
+        "prefill_chunk_when_decoding",
         "kv_dtype",
         "spec",
         "draft_tokens",
@@ -249,6 +254,15 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
     prefill = _int_field(candidate, "prefill_chunk")
     if prefill <= 0 or prefill > max_context or prefill % 128 != 0:
         raise ConfigError("prefill_chunk 必须是不超过 max_context 的 128 倍数")
+    contended_prefill = _int_field(candidate, "prefill_chunk_when_decoding")
+    if (
+        contended_prefill <= 0
+        or contended_prefill > prefill
+        or contended_prefill % 128 != 0
+    ):
+        raise ConfigError(
+            "prefill_chunk_when_decoding 必须是不超过 prefill_chunk 的 128 倍数"
+        )
     default_max = _int_field(candidate, "default_max_tokens")
     if not 1 <= default_max <= max_context:
         raise ConfigError("default_max_tokens 必须在 1..max_context 之间")
@@ -281,6 +295,7 @@ def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
         "max_pending_requests": max_pending,
         "pending_timeout_ms": timeout,
         "prefill_chunk": prefill,
+        "prefill_chunk_when_decoding": contended_prefill,
         "kv_dtype": kv_dtype,
         "spec": spec,
         "draft_tokens": draft_tokens,
@@ -337,6 +352,7 @@ def render_config(text: str, candidate: dict[str, Any]) -> str:
         "--max-pending-requests": str(config["max_pending_requests"]),
         "--pending-timeout-ms": str(config["pending_timeout_ms"]),
         "--prefill-chunk": str(config["prefill_chunk"]),
+        "--prefill-chunk-when-decoding": str(config["prefill_chunk_when_decoding"]),
         "--kv-dtype": str(config["kv_dtype"]),
     }
     for option, value in value_options.items():

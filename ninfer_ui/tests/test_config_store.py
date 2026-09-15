@@ -41,6 +41,8 @@ COMPOSE = """services:
       - "600000"
       - --prefill-chunk
       - "1024"
+      - --prefill-chunk-when-decoding
+      - "256"
       - --kv-dtype
       - int8
       - --spec
@@ -69,6 +71,30 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(updated["max_concurrency"], 8)
         self.assertEqual(updated["kv_capacity"], "524288")
         self.assertIn('      - "524288"', result.diff)
+
+    def test_updates_decode_contended_prefill_chunk(self) -> None:
+        config = parse_config(COMPOSE)
+        self.assertEqual(config["prefill_chunk_when_decoding"], 256)
+        config["prefill_chunk_when_decoding"] = 128
+        result = preview(COMPOSE, config)
+        self.assertEqual(parse_config(result.rendered)["prefill_chunk_when_decoding"], 128)
+        self.assertIn("--prefill-chunk-when-decoding\n      - \"128\"", result.rendered)
+
+    def test_rejects_decode_contended_prefill_larger_than_workspace(self) -> None:
+        config = parse_config(COMPOSE)
+        config["prefill_chunk"] = 256
+        config["prefill_chunk_when_decoding"] = 512
+        with self.assertRaisesRegex(ConfigError, "prefill_chunk_when_decoding"):
+            preview(COMPOSE, config)
+
+    def test_legacy_small_prefill_defaults_contended_chunk_to_workspace(self) -> None:
+        legacy = COMPOSE.replace(
+            '      - "1024"\n      - --prefill-chunk-when-decoding\n      - "256"',
+            '      - "128"',
+        )
+        config = parse_config(legacy)
+        self.assertEqual(config["prefill_chunk"], 128)
+        self.assertEqual(config["prefill_chunk_when_decoding"], 128)
 
     def test_updates_vision_budgets(self) -> None:
         config = parse_config(COMPOSE)

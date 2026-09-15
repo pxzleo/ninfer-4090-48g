@@ -37,6 +37,8 @@ services:
       - "600000"
       - --prefill-chunk
       - "1024"
+      - --prefill-chunk-when-decoding
+      - "256"
       - --kv-dtype
       - int8
       - --spec

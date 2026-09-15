@@ -476,6 +476,7 @@ curl http://127.0.0.1:8080/v1/models \
 | `--max-pending-requests N` | additional requests allowed to wait for admission | `16` |
 | `--pending-timeout-ms N` | maximum preparation-plus-admission wait | `30000` |
 | `--prefill-chunk N` | text-prefill chunk | `1024` |
+| `--prefill-chunk-when-decoding N` | text-prefill chunk while any admitted request is decode-ready; must not exceed `--prefill-chunk` | `min(--prefill-chunk, 256)` |
 | `--log-stats-interval-ms N` | aggregate throughput report interval; `0` disables it | `5000` |
 | `--device N` | CUDA device index | `0` |
 | `--max-request-mib N` | body-size limit before JSON parsing | `384` |
@@ -534,7 +535,7 @@ is also rejected if it resolves to the model artifact.
   --request-log-jsonl profiles/bench/run/server.requests.jsonl
 ```
 
-Every line is one `ninfer_serve_request_log` schema-v9 JSON object. All events carry
+Every line is one `ninfer_serve_request_log` schema-v10 JSON object. All events carry
 `timestamp_unix_ms` and a process-unique `server_instance_id`; request IDs are monotonic only within
 that server instance.
 

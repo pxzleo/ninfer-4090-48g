@@ -133,6 +133,7 @@ int run(const Options& options) {
                                                             2ULL * options.draft_tokens);
     engine.kv_capacity         = ninfer::KvCapacityPolicy::explicit_capacity(engine.max_context);
     engine.prefill_chunk       = 128;
+    engine.prefill_chunk_when_decoding = 128;
     engine.kv_cache            = ninfer::KvCacheStorage::BFloat16;
     engine.speculative.backend = ninfer::SpeculativeBackend::Mtp;
     engine.speculative.draft_tokens  = options.draft_tokens;
@@ -166,7 +167,7 @@ int run(const Options& options) {
     request_memory.activate(request_plan.summary().transient_bytes,
                             request_plan.summary().transient_alignment);
     const auto first = program->start_prefill_lane(0, std::move(prompt), std::move(request_plan),
-                                                   request_memory.region());
+                                                   request_memory.region(), engine.prefill_chunk);
     request_memory.deactivate();
     if (!first.complete || first.round.tokens.size() != 1) {
         throw std::runtime_error("benchmark seed prefill did not complete in one scheduling unit");

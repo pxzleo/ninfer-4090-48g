@@ -1,6 +1,7 @@
 #include "options.h"
 #include "product/speculative_options.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
@@ -86,7 +87,8 @@ ReasoningLanguage parse_reasoning_language(std::string_view text) {
 std::string usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 +
            " <model.ninfer> (--prompt <text>|--messages <messages.json>)\n"
-           "[--max-context N] [--kv-capacity N|auto] [--prefill-chunk N] [--max-new N]\n"
+           "[--max-context N] [--kv-capacity N|auto] [--prefill-chunk N] "
+           "[--prefill-chunk-when-decoding N] [--max-new N]\n"
            "[--device N]\n"
            "[--kv-dtype bf16|int8|rk8v4|rk4v4|rk4v4-e8|rk2v4-e8] [--spec mtp|dflash --draft-tokens N]\n"
            "       [--lm-head-draft]\n"
@@ -121,6 +123,7 @@ Options parse_options(int argc, char** argv) {
     if (argc < 2) { throw std::invalid_argument(".ninfer model path is required"); }
     options.artifact_path     = argv[1];
     bool kv_capacity_explicit = false;
+    bool contended_prefill_explicit = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view arg(argv[i]);
@@ -142,6 +145,10 @@ Options parse_options(int argc, char** argv) {
             kv_capacity_explicit = true;
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = parse_u32(value(arg), "prefill-chunk");
+        } else if (arg == "--prefill-chunk-when-decoding") {
+            options.prefill_chunk_when_decoding =
+                parse_u32(value(arg), "prefill-chunk-when-decoding");
+            contended_prefill_explicit = true;
         } else if (arg == "--device") {
             options.device = parse_device(value(arg));
         } else if (arg == "--kv-dtype") {
@@ -214,6 +221,9 @@ Options parse_options(int argc, char** argv) {
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
     }
+    if (!contended_prefill_explicit) {
+        options.prefill_chunk_when_decoding = std::min(options.prefill_chunk, 256U);
+    }
 
     const bool has_prompt   = !options.prompt.empty();
     const bool has_messages = !options.messages_path.empty();
@@ -222,6 +232,13 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.prefill_chunk % 128 != 0) {
         throw std::invalid_argument("--prefill-chunk must be a multiple of 128");
+    }
+    if (options.prefill_chunk_when_decoding == 0 ||
+        options.prefill_chunk_when_decoding % 128 != 0 ||
+        options.prefill_chunk_when_decoding > options.prefill_chunk) {
+        throw std::invalid_argument(
+            "--prefill-chunk-when-decoding must be a positive multiple of 128 no greater than "
+            "--prefill-chunk");
     }
     if (options.kv_capacity.mode == KvCapacityMode::Explicit &&
         options.kv_capacity.explicit_tokens < options.max_context) {

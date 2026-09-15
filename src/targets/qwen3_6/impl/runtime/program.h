@@ -238,8 +238,10 @@ public:
     [[nodiscard]] runtime::PrefillStepResult start_prefill_lane(std::uint32_t lane,
                                                                 PreparedPromptData&& prompt,
                                                                 RequestPlan&& plan,
-                                                                runtime::TransientRegion transient);
-    [[nodiscard]] runtime::PrefillStepResult advance_prefill_lane(std::uint32_t lane);
+                                                                runtime::TransientRegion transient,
+                                                                std::uint32_t chunk_limit);
+    [[nodiscard]] runtime::PrefillStepResult advance_prefill_lane(std::uint32_t lane,
+                                                                  std::uint32_t chunk_limit);
     [[nodiscard]] runtime::BatchedGeneratedRound
     decode_batch(std::span<const std::uint32_t> lanes,
                  std::span<const runtime::RoundBudget> budgets);
@@ -275,6 +277,7 @@ public:
     const std::uint32_t kv_capacity;
     const std::uint32_t max_concurrency;
     const std::uint32_t prefill_chunk;
+    const std::uint32_t service_prefill_chunk;
     const std::uint32_t draft_window;
     const SpeculativeBackend speculative_backend;
     const DType kv_dtype;
@@ -363,7 +366,8 @@ private:
     void resolve_non_speculative_pending(SequenceState& sequence, RequestControl& request,
                                          std::uint32_t accepted_tokens, bool terminal);
     [[nodiscard]] runtime::PrefillStepResult advance_prefill(SequenceState& sequence,
-                                                             RequestControl& request);
+                                                             RequestControl& request,
+                                                             std::uint32_t chunk_limit);
     void enqueue_dflash_context_append(std::span<const std::uint32_t> lanes,
                                        std::span<const std::uint32_t> starts,
                                        std::span<const std::uint32_t> counts);

@@ -114,16 +114,16 @@
                     <p id="trend-window-label" data-i18n="trend.defaultWindow">服务端两秒执行窗口</p>
                 </div>
                 <div class="trend-tools">
+                  <div class="period-nav" id="period-nav" hidden>
+                    <button type="button" id="history-prev" aria-label="上一周期" title="上一周期" data-i18n-aria="trend.previous" data-i18n-title="trend.previous">‹</button>
+                    <span id="history-period-label">—</span>
+                    <button type="button" id="history-next" aria-label="下一周期" title="下一周期" data-i18n-aria="trend.next" data-i18n-title="trend.next">›</button>
+                  </div>
                   <div class="range-switch" aria-label="吞吐趋势时间范围" data-i18n-aria="trend.range">
                     <button class="is-active" type="button" data-history-range="realtime" aria-pressed="true" data-i18n="trend.realtime">实时</button>
                     <button type="button" data-history-range="day" aria-pressed="false" data-i18n="trend.day">天</button>
                     <button type="button" data-history-range="week" aria-pressed="false" data-i18n="trend.week">周</button>
                     <button type="button" data-history-range="month" aria-pressed="false" data-i18n="trend.month">月</button>
-                  </div>
-                  <div class="period-nav" id="period-nav" hidden>
-                    <button type="button" id="history-prev" aria-label="上一周期" title="上一周期" data-i18n-aria="trend.previous" data-i18n-title="trend.previous">‹</button>
-                    <span id="history-period-label">—</span>
-                    <button type="button" id="history-next" aria-label="下一周期" title="下一周期" data-i18n-aria="trend.next" data-i18n-title="trend.next">›</button>
                   </div>
                   <div class="legend">
                     <span><i class="legend-decode"></i><b data-i18n="metric.decode">解码</b></span>
@@ -239,6 +239,7 @@
                     <label><span data-i18n="settings.maxQueue">排队上限</span><small data-i18n="settings.maxQueueHelp">不占用执行槽</small><input name="max_pending_requests" type="number" min="1" max="1024" required></label>
                     <label><span data-i18n="settings.queueTimeout">排队超时</span><small data-i18n="settings.milliseconds">毫秒</small><input name="pending_timeout_ms" type="number" min="1" max="3600000" required></label>
                     <label><span data-i18n="settings.prefillChunk">预填充分块</span><small data-i18n="settings.prefillChunkHelp">128 的倍数</small><input name="prefill_chunk" type="number" step="128" min="128" required></label>
+                    <label><span data-i18n="settings.prefillChunkWhenDecoding">解码时预填充分块</span><small data-i18n="settings.prefillChunkWhenDecodingHelp">有请求解码时使用，且不超过预填充分块</small><input name="prefill_chunk_when_decoding" type="number" step="128" min="128" required></label>
                   </div>
                 </fieldset>
 

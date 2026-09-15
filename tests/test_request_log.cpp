@@ -51,6 +51,7 @@ int main() {
     options.max_context                    = 262144;
     options.kv_capacity                    = ninfer::KvCapacityPolicy::explicit_capacity(524288);
     options.prefill_chunk                  = 1024;
+    options.prefill_chunk_when_decoding    = 256;
     options.log_stats_interval_ms          = 2500;
     options.kv_cache                       = ninfer::KvCacheStorage::Int8Group64;
     options.speculative.backend            = ninfer::SpeculativeBackend::Mtp;
@@ -126,6 +127,9 @@ int main() {
                       "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
+    failures += check(server.at("engine").at("prefill_chunk") == 1024 &&
+                          server.at("engine").at("prefill_chunk_when_decoding") == 256,
+                      "adaptive prefill configuration missing");
     failures += check(server.at("engine").at("kv_capacity") == 524288, "KV capacity missing");
     failures += check(server.at("engine").at("kv_capacity_mode") == "explicit" &&
                           server.at("engine").at("kv_capacity_page_groups") == 8192 &&
