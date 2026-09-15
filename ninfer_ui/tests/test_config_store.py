@@ -260,6 +260,20 @@ class ConfigTemplateStoreTest(unittest.TestCase):
             self.assertTrue(replaced)
             self.assertEqual(store.get("日常")["max_pending_requests"], 32)
 
+    def test_deletes_template_without_changing_others(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ConfigTemplateStore(Path(temp) / "templates.json")
+            config = parse_config(COMPOSE)
+            store.save("日常", config)
+            store.save("长上下文", dict(config, max_context=131072))
+
+            self.assertEqual(store.delete(" 日常 "), "日常")
+            self.assertEqual(
+                [item["name"] for item in store.list_templates()], ["长上下文"]
+            )
+            with self.assertRaisesRegex(ConfigError, "不存在"):
+                store.delete("日常")
+
     def test_rejects_empty_or_unknown_template_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = ConfigTemplateStore(Path(temp) / "templates.json")

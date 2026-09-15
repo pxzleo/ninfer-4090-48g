@@ -361,6 +361,7 @@ main { padding: clamp(18px, 2vw, 30px); }
 .template-controls label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .template-controls input, .template-controls select { margin: 0; }
 .template-controls .button { min-height: 36px; }
+.template-actions { display: flex; gap: 8px; }
 .template-help { margin: 12px 0 0; color: var(--quiet); font-size: 10px; line-height: 1.5; }
 .toggle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px; margin-top: 24px; }
 .toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
@@ -515,6 +516,7 @@ dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
   .history-delete-grid { grid-template-columns: 1fr; }
   .form-actions { align-items: stretch; flex-direction: column; }
   .template-controls { grid-template-columns: 1fr; }
+  .template-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .form-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
   .form-actions .service-actions { grid-template-columns: repeat(3, 1fr); }
   .form-actions > .button { width: 100%; }

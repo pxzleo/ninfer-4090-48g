@@ -516,16 +516,7 @@ class ConfigTemplateStore:
         except KeyError as exc:
             raise ConfigError(f"配置模板不存在: {normalized}") from exc
 
-    def save(
-        self, name: Any, candidate: dict[str, Any], allow_replace: bool = False
-    ) -> tuple[str, bool]:
-        normalized = validate_template_name(name)
-        config = validate_config(candidate)
-        templates = self._read()
-        replaced = normalized in templates
-        if replaced and not allow_replace:
-            raise ConfigConflictError(f"配置模板已存在，请确认覆盖: {normalized}")
-        templates[normalized] = config
+    def _write(self, templates: dict[str, dict[str, Any]]) -> None:
         document = {"version": 1, "templates": templates}
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -545,4 +536,25 @@ class ConfigTemplateStore:
             except FileNotFoundError:
                 pass
             raise
+
+    def save(
+        self, name: Any, candidate: dict[str, Any], allow_replace: bool = False
+    ) -> tuple[str, bool]:
+        normalized = validate_template_name(name)
+        config = validate_config(candidate)
+        templates = self._read()
+        replaced = normalized in templates
+        if replaced and not allow_replace:
+            raise ConfigConflictError(f"配置模板已存在，请确认覆盖: {normalized}")
+        templates[normalized] = config
+        self._write(templates)
         return normalized, replaced
+
+    def delete(self, name: Any) -> str:
+        normalized = validate_template_name(name)
+        templates = self._read()
+        if normalized not in templates:
+            raise ConfigError(f"配置模板不存在: {normalized}")
+        del templates[normalized]
+        self._write(templates)
+        return normalized
