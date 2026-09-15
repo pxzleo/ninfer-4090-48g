@@ -22,7 +22,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from config_store import ComposeStore, ConfigConflictError, ConfigError
+from config_store import (
+    ConfigTemplateStore,
+    ComposeStore,
+    ConfigConflictError,
+    ConfigError,
+    validate_template_name,
+)
 from history_store import HistoryStore
 
 
@@ -35,6 +41,9 @@ CONTAINER_NAME = os.environ.get("NINFER_UI_CONTAINER", "ninfer-4090")
 SERVICE_NAME = os.environ.get("NINFER_UI_SERVICE", "ninfer")
 BACKUP_DIR = ROOT / "backups"
 HISTORY_PATH = Path(os.environ.get("NINFER_UI_HISTORY", ROOT / "history.sqlite3")).resolve()
+TEMPLATE_PATH = Path(
+    os.environ.get("NINFER_UI_TEMPLATES", ROOT / "runtime" / "config_templates.json")
+).resolve()
 LAN_API_OVERRIDE = os.environ.get("NINFER_UI_LAN_API", "").strip()
 ALLOW_LAN = os.environ.get("NINFER_UI_ALLOW_LAN", "").strip() == "1"
 PUBLIC_HOST = os.environ.get("NINFER_UI_PUBLIC_HOST", "").strip().lower()
@@ -84,6 +93,7 @@ class SnapshotCache:
 
 
 STORE = ComposeStore(COMPOSE_PATH, BACKUP_DIR)
+TEMPLATES = ConfigTemplateStore(TEMPLATE_PATH)
 CACHE = SnapshotCache()
 HISTORY = HistoryStore(HISTORY_PATH)
 MUTATION_LOCK = threading.Lock()
@@ -502,20 +512,30 @@ def _wait_for_ninfer_health(output: str) -> dict[str, Any]:
     raise RuntimeError(f"容器已启动，但 90 秒内健康检查未通过: {last_error}")
 
 
-def start_ninfer() -> dict[str, Any]:
+def start_ninfer(template_name: str | None = None) -> dict[str, Any]:
     state = container_state()
     error = str(state.get("error", ""))
     if state.get("available") and state.get("running"):
         raise UiError(HTTPStatus.CONFLICT, "NInfer 已经在运行")
     if not state.get("available") and "no such" not in error.lower():
         raise RuntimeError(error or "启动前无法确认容器状态")
+    template_changed = False
+    if template_name is not None:
+        template_name = validate_template_name(template_name)
+        config = TEMPLATES.get(template_name)
+        _, _, revision = STORE.read()
+        template_changed = bool(STORE.apply(config, revision).diff)
     result = docker_command(
         ["compose", "--file", str(COMPOSE_PATH), "up", "-d", SERVICE_NAME],
         timeout=150.0,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stdout.strip() or "Docker Compose 启动失败")
-    return _wait_for_ninfer_health(result.stdout)
+    response = _wait_for_ninfer_health(result.stdout)
+    if template_name is not None:
+        response["template"] = template_name
+        response["config_changed"] = template_changed
+    return response
 
 
 def stop_ninfer() -> dict[str, Any]:
@@ -670,6 +690,7 @@ class UiHandler(BaseHTTPRequestHandler):
                         "config": config,
                         "revision": revision,
                         "compose_path": str(COMPOSE_PATH),
+                        "templates": TEMPLATES.list_templates(),
                     },
                 )
                 return
@@ -709,6 +730,25 @@ class UiHandler(BaseHTTPRequestHandler):
         try:
             self._require_safe_mutation()
             body = self._read_json()
+            if parsed.path == "/api/config/templates":
+                allow_replace = body.get("replace", False)
+                if not isinstance(allow_replace, bool):
+                    raise UiError(HTTPStatus.BAD_REQUEST, "replace 必须是布尔值")
+                with MUTATION_LOCK:
+                    name, replaced = TEMPLATES.save(
+                        body.get("name"), body.get("config", {}), allow_replace
+                    )
+                    templates = TEMPLATES.list_templates()
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "name": name,
+                        "replaced": replaced,
+                        "templates": templates,
+                    },
+                )
+                return
             if parsed.path == "/api/config/apply":
                 if body.get("confirmation") != "APPLY CONFIG":
                     raise UiError(HTTPStatus.BAD_REQUEST, "确认文本不正确")
@@ -736,8 +776,11 @@ class UiHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/start":
                 if body.get("confirmation") != "START NINFER":
                     raise UiError(HTTPStatus.BAD_REQUEST, "确认文本不正确")
+                template_name = body.get("template")
+                if template_name is not None and not isinstance(template_name, str):
+                    raise UiError(HTTPStatus.BAD_REQUEST, "模板名必须是字符串")
                 with MUTATION_LOCK:
-                    result = start_ninfer()
+                    result = start_ninfer(template_name or None)
                 self._send_json(HTTPStatus.OK, result)
                 return
             if parsed.path == "/api/stop":

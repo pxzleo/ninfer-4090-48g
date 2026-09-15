@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config_store import (  # noqa: E402
+    ConfigTemplateStore,
     ComposeStore,
     ConfigConflictError,
     ConfigError,
@@ -226,6 +227,53 @@ class ConfigStoreTest(unittest.TestCase):
             self.assertEqual(len(list((root / "backups").glob("compose-*.yaml"))), 1)
             with self.assertRaises(ConfigConflictError):
                 store.apply(config, revision_for(COMPOSE))
+
+
+class ConfigTemplateStoreTest(unittest.TestCase):
+    def test_saves_lists_and_loads_validated_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ConfigTemplateStore(Path(temp) / "runtime" / "templates.json")
+            config = parse_config(COMPOSE)
+            config["max_concurrency"] = 8
+
+            name, replaced = store.save(" 8 路并发 ", config)
+
+            self.assertEqual(name, "8 路并发")
+            self.assertFalse(replaced)
+            self.assertEqual(store.get(name)["max_concurrency"], 8)
+            self.assertEqual(
+                [item["name"] for item in store.list_templates()], ["8 路并发"]
+            )
+
+    def test_saving_same_name_replaces_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ConfigTemplateStore(Path(temp) / "templates.json")
+            first = parse_config(COMPOSE)
+            second = dict(first, max_pending_requests=32)
+            store.save("日常", first)
+
+            with self.assertRaisesRegex(ConfigConflictError, "确认覆盖"):
+                store.save("日常", second)
+
+            _, replaced = store.save("日常", second, allow_replace=True)
+
+            self.assertTrue(replaced)
+            self.assertEqual(store.get("日常")["max_pending_requests"], 32)
+
+    def test_rejects_empty_or_unknown_template_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ConfigTemplateStore(Path(temp) / "templates.json")
+            with self.assertRaisesRegex(ConfigError, "不能为空"):
+                store.save("  ", parse_config(COMPOSE))
+            with self.assertRaisesRegex(ConfigError, "不存在"):
+                store.get("missing")
+
+    def test_reports_corrupt_template_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "templates.json"
+            path.write_text("{broken", encoding="utf-8")
+            with self.assertRaisesRegex(ConfigError, "JSON 无效"):
+                ConfigTemplateStore(path).list_templates()
 
 
 if __name__ == "__main__":

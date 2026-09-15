@@ -328,6 +328,40 @@ class ServiceControlTest(unittest.TestCase):
         self.assertEqual(args[-3:], ["up", "-d", server_module.SERVICE_NAME])
         self.assertEqual(result["health"], "ok")
 
+    @patch.object(server_module, "fetch_json", return_value={"status": "ok"})
+    @patch.object(
+        server_module,
+        "container_state",
+        return_value={"available": True, "running": False},
+    )
+    @patch.object(server_module, "docker_command")
+    @patch.object(server_module, "STORE")
+    @patch.object(server_module, "TEMPLATES")
+    def test_start_by_template_name_applies_template_before_compose_up(
+        self, templates, store, docker, _state, _fetch
+    ) -> None:
+        config = {"max_concurrency": 8}
+        events = []
+        templates.get.side_effect = lambda name: events.append(("get", name)) or config
+        store.read.side_effect = lambda: events.append(("read",)) or (
+            "compose", {}, "revision"
+        )
+        store.apply.side_effect = lambda candidate, revision: events.append(
+            ("apply", candidate, revision)
+        ) or type("Preview", (), {"diff": "changed"})()
+        docker.side_effect = lambda args, timeout: events.append(("docker", args)) or (
+            CompletedProcess([], 0, "started", "")
+        )
+
+        result = server_module.start_ninfer(" 8 路并发 ")
+
+        templates.get.assert_called_once_with("8 路并发")
+        store.apply.assert_called_once_with(config, "revision")
+        self.assertEqual([event[0] for event in events], ["get", "read", "apply", "docker"])
+        self.assertEqual(docker.call_args.args[0][-3:], ["up", "-d", server_module.SERVICE_NAME])
+        self.assertEqual(result["template"], "8 路并发")
+        self.assertTrue(result["config_changed"])
+
     @patch.object(
         server_module,
         "container_state",
