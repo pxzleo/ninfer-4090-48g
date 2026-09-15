@@ -168,6 +168,7 @@ setLanguageMode("en");
 process.stdout.write(JSON.stringify([
   localizeApiError("compose.yaml 已被其他进程修改，请刷新后重试"),
   localizeApiError("容器已启动，但 90 秒内健康检查未通过: connection refused"),
+  localizeApiError("配置模板不存在: 8 路并发"),
 ]));
 """
         result = subprocess.run(
@@ -178,6 +179,7 @@ process.stdout.write(JSON.stringify([
             [
                 "compose.yaml was modified by another process; refresh and try again",
                 "The container started, but its health check did not pass within 90 seconds: connection refused",
+                "Configuration template does not exist: 8 路并发",
             ],
         )
 
@@ -230,6 +232,50 @@ process.stdout.write(JSON.stringify({{
         app = APP_JS.read_text(encoding="utf-8")
         self.assertIn('"settings.chineseReasoningHelp": "新建会话生效"', app)
         self.assertNotIn('input name="thinking"', html)
+
+    def test_settings_expose_template_save_select_and_named_start(self):
+        html = APP_HTML.read_text(encoding="utf-8")
+        javascript = APP_JS.read_text(encoding="utf-8")
+        self.assertIn('id="config-template"', html)
+        self.assertIn('id="template-name"', html)
+        self.assertIn('id="save-template"', html)
+        self.assertIn('api("/api/config/templates"', javascript)
+        self.assertIn("else if (state.config)", javascript)
+        self.assertIn("if (templateName) await loadConfig(templateName)", javascript)
+        self.assertIn("replace: replacing", javascript)
+
+        script = f"""
+const {{startRequestBody}} = require({json.dumps(str(APP_JS))});
+process.stdout.write(JSON.stringify([
+  startRequestBody(""),
+  startRequestBody("8 路并发"),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                {"confirmation": "START NINFER"},
+                {"confirmation": "START NINFER", "template": "8 路并发"},
+            ],
+        )
+
+    def test_template_selection_is_retained_only_when_file_config_matches(self):
+        script = f"""
+const {{matchingTemplateName}} = require({json.dumps(str(APP_JS))});
+const templates = [{{name: "fast", config: {{slots: 8, spec: "mtp"}}}}];
+process.stdout.write(JSON.stringify([
+  matchingTemplateName(templates, "fast", {{slots: 8, spec: "mtp"}}),
+  matchingTemplateName(templates, "fast", {{slots: 4, spec: "mtp"}}),
+  matchingTemplateName(templates, "missing", {{slots: 8, spec: "mtp"}}),
+]));
+"""
+        result = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(json.loads(result.stdout), ["fast", "", ""])
 
     def test_static_translation_keys_exist_in_both_languages(self):
         script = f"""

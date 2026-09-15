@@ -13,6 +13,7 @@ const I18N = {
     "language.label": "界面语言", "language.auto": "自动", "language.zh": "中文", "language.en": "English",
     "settings.chineseReasoning": "中文思考",
     "settings.chineseReasoningHelp": "新建会话生效",
+    "templates.title": "配置模板", "templates.select": "已保存模板", "templates.none": "不使用模板", "templates.name": "模板名", "templates.namePlaceholder": "例如：8 路并发", "templates.save": "保存当前设置为模板", "templates.saving": "正在保存…", "templates.help": "选择模板会回填设置；服务停止时点击启动，将按所选模板写入配置并启动。", "templates.saved": "模板“{name}”已保存", "templates.replaced": "模板“{name}”已更新", "templates.nameRequired": "请输入模板名", "templates.replaceTitle": "覆盖配置模板", "templates.replaceMessage": "模板“{name}”已经存在。是否用当前设置覆盖？", "templates.replaceButton": "确认覆盖",
     "connection.status": "连接状态", "connection.connecting": "正在连接", "connection.updated": "最后更新", "connection.online": "服务在线", "connection.unavailable": "服务不可用", "connection.failed": "连接失败",
     "action.refresh": "立即刷新", "common.off": "关闭", "common.cancel": "取消", "common.confirm": "确认", "error.network": "网络请求失败，请检查 UI 服务连接",
     "overview.title": "实时运行", "overview.waitingModel": "等待模型信息", "overview.totals": "累计用量",
@@ -32,6 +33,7 @@ const I18N = {
     "language.label": "Language", "language.auto": "Auto", "language.zh": "中文", "language.en": "English",
     "settings.chineseReasoning": "Chinese reasoning",
     "settings.chineseReasoningHelp": "Takes effect for new sessions",
+    "templates.title": "Configuration templates", "templates.select": "Saved template", "templates.none": "Do not use a template", "templates.name": "Template name", "templates.namePlaceholder": "For example: 8-way concurrency", "templates.save": "Save current settings as template", "templates.saving": "Saving…", "templates.help": "Selecting a template fills the settings. When the service is stopped, Start applies the selected template before launching.", "templates.saved": "Template “{name}” saved", "templates.replaced": "Template “{name}” updated", "templates.nameRequired": "Enter a template name", "templates.replaceTitle": "Replace configuration template", "templates.replaceMessage": "Template “{name}” already exists. Replace it with the current settings?", "templates.replaceButton": "Replace",
     "connection.status": "Connection status", "connection.connecting": "Connecting", "connection.updated": "Last updated", "connection.online": "Service online", "connection.unavailable": "Service unavailable", "connection.failed": "Connection failed",
     "action.refresh": "Refresh now", "common.off": "Off", "common.cancel": "Cancel", "common.confirm": "Confirm", "error.network": "Network request failed; check the UI service connection",
     "overview.title": "Live workload", "overview.waitingModel": "Waiting for model information", "overview.totals": "Cumulative usage",
@@ -104,6 +106,9 @@ const state = {
   config: null,
   revision: "",
   configSaveBusy: false,
+  templates: [],
+  selectedTemplate: "",
+  templateSaveBusy: false,
   container: {},
   serviceControlBusy: false,
   serviceAction: null,
@@ -203,6 +208,11 @@ function localizeApiError(message) {
     "Content-Length 无效": "Invalid Content-Length header",
     "JSON 无效": "Invalid JSON",
     "JSON 顶层必须是对象": "The top-level JSON value must be an object",
+    "配置必须是对象": "Configuration must be an object",
+    "模板名必须是字符串": "Template name must be a string",
+    "模板名不能为空": "Template name cannot be empty",
+    "模板名不能包含控制字符": "Template name cannot contain control characters",
+    "replace 必须是布尔值": "replace must be a boolean",
     "页面不存在": "Page not found",
     "接口不存在": "API endpoint not found",
     "路径无效": "Invalid path",
@@ -244,6 +254,10 @@ function localizeApiError(message) {
   if (match) return `${match[1] === "不支持的配置字段" ? "Unsupported configuration fields" : "Missing configuration fields"}: ${match[2]}`;
   match = /^无法解析 command token: (.+)$/.exec(message);
   if (match) return `Unable to parse command token: ${match[1]}`;
+  match = /^配置模板不存在: (.+)$/.exec(message);
+  if (match) return `Configuration template does not exist: ${match[1]}`;
+  match = /^配置模板已存在，请确认覆盖: (.+)$/.exec(message);
+  if (match) return `Configuration template already exists; confirm replacement: ${match[1]}`;
   match = /^(.+) 在 compose\.yaml 中缺少值$/.exec(message);
   if (match) return `${match[1]} is missing a value in compose.yaml`;
   match = /^容器已启动，但 90 秒内健康检查未通过: (.*)$/.exec(message);
@@ -1283,6 +1297,42 @@ function populateConfig(config) {
   syncVisionFields();
 }
 
+function renderTemplates(selectedName = "") {
+  const select = $("#config-template");
+  select.replaceChildren();
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = t("templates.none");
+  select.append(empty);
+  for (const template of state.templates) {
+    const option = document.createElement("option");
+    option.value = template.name;
+    option.textContent = template.name;
+    select.append(option);
+  }
+  state.selectedTemplate = state.templates.some(item => item.name === selectedName)
+    ? selectedName : "";
+  select.value = state.selectedTemplate;
+}
+
+function selectTemplate(name) {
+  const template = state.templates.find(item => item.name === name);
+  state.selectedTemplate = template ? template.name : "";
+  if (template) {
+    populateConfig(template.config);
+    $("#template-name").value = template.name;
+  } else if (state.config) {
+    populateConfig(state.config);
+  }
+  $("#config-template").value = state.selectedTemplate;
+}
+
+function matchingTemplateName(templates, requestedName, config) {
+  const template = templates.find(item => item.name === requestedName);
+  return template && JSON.stringify(template.config) === JSON.stringify(config)
+    ? template.name : "";
+}
+
 function configFromForm() {
   const form = $("#settings-form");
   const config = {};
@@ -1296,15 +1346,56 @@ function configFromForm() {
   return config;
 }
 
-async function loadConfig() {
+async function loadConfig(selectedTemplate = "") {
   try {
     const data = await api("/api/config");
     state.config = data.config;
     state.revision = data.revision;
+    state.templates = Array.isArray(data.templates) ? data.templates : [];
     populateConfig(data.config);
+    renderTemplates(matchingTemplateName(state.templates, selectedTemplate, data.config));
     $("#compose-path").textContent = data.compose_path;
   } catch (error) {
     toast(error.message, true);
+  }
+}
+
+async function saveTemplate() {
+  const name = $("#template-name").value.trim();
+  if (!name) {
+    toast(t("templates.nameRequired"), true);
+    $("#template-name").focus();
+    return;
+  }
+  const replacing = state.templates.some(template => template.name === name);
+  if (replacing) {
+    const confirmed = await confirmAction({
+      titleKey: "templates.replaceTitle",
+      messageKey: "templates.replaceMessage",
+      buttonKey: "templates.replaceButton",
+      values: {name},
+    });
+    if (!confirmed) return;
+  }
+  state.templateSaveBusy = true;
+  const button = $("#save-template");
+  button.disabled = true;
+  button.textContent = t("templates.saving");
+  try {
+    const data = await api("/api/config/templates", {
+      method: "POST",
+      body: JSON.stringify({name, config: configFromForm(), replace: replacing}),
+    });
+    state.templates = data.templates;
+    renderTemplates(data.name);
+    $("#template-name").value = data.name;
+    toast(t(data.replaced ? "templates.replaced" : "templates.saved", {name: data.name}));
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.templateSaveBusy = false;
+    button.disabled = false;
+    button.textContent = t("templates.save");
   }
 }
 
@@ -1397,6 +1488,20 @@ function configApplyConfirmationOptions() {
   };
 }
 
+function startRequestBody(templateName = "") {
+  const body = {confirmation: "START NINFER"};
+  if (templateName) body.template = templateName;
+  return body;
+}
+
+function setSettingsEditingDisabled(disabled) {
+  $$("#settings-form fieldset").forEach(fieldset => {
+    fieldset.disabled = disabled;
+  });
+  $("#reset-config").disabled = disabled;
+  $("#save-config").disabled = disabled;
+}
+
 function renderConfirmContext() {
   const context = state.confirmContext;
   if (!context) return;
@@ -1461,24 +1566,28 @@ async function restartService() {
 }
 
 async function startService() {
+  const templateName = state.selectedTemplate;
   state.serviceControlBusy = true;
   state.serviceAction = "start";
+  setSettingsEditingDisabled(true);
   updateServiceControls(state.container);
   const button = $("#start-service");
   button.textContent = t("service.starting");
   try {
     await api("/api/start", {
       method: "POST",
-      body: JSON.stringify({ confirmation: "START NINFER" }),
+      body: JSON.stringify(startRequestBody(templateName)),
     });
     toast(t("service.started"));
     await refreshSnapshot(true);
   } catch (error) {
     toast(error.message, true);
   } finally {
+    if (templateName) await loadConfig(templateName);
     button.textContent = t("service.start");
     state.serviceAction = null;
     state.serviceControlBusy = false;
+    setSettingsEditingDisabled(false);
     updateServiceControls(state.container);
   }
 }
@@ -1579,6 +1688,9 @@ function applyTranslations() {
   $$('[data-i18n-title]').forEach(node => {
     node.title = t(node.dataset.i18nTitle);
   });
+  $$('[data-i18n-placeholder]').forEach(node => {
+    node.placeholder = t(node.dataset.i18nPlaceholder);
+  });
   $("#language-select").value = state.languageMode;
 
   if (state.latestSnapshot) {
@@ -1591,6 +1703,8 @@ function applyTranslations() {
     drawChart();
   }
   if (state.configSaveBusy) $("#save-config").textContent = t("settings.saving");
+  renderTemplates(state.selectedTemplate);
+  if (state.templateSaveBusy) $("#save-template").textContent = t("templates.saving");
   if (state.serviceAction) {
     const progressKey = {
       start: "service.starting",
@@ -1626,7 +1740,14 @@ function bindEvents() {
   $("#reload-logs").addEventListener("click", () => loadRawLogs(true));
   $("#raw-log-details").addEventListener("toggle", syncLogPolling);
   $("#settings-form").addEventListener("submit", saveConfig);
-  $("#reset-config").addEventListener("click", loadConfig);
+  $("#reset-config").addEventListener("click", () => loadConfig());
+  $("#config-template").addEventListener("change", event => selectTemplate(event.target.value));
+  $("#save-template").addEventListener("click", saveTemplate);
+  $("#settings-form").addEventListener("input", event => {
+    if (!state.config || !(event.target.name in state.config)) return;
+    state.selectedTemplate = "";
+    $("#config-template").value = "";
+  });
   $("#start-service").addEventListener("click", startService);
   $("#stop-service").addEventListener("click", stopService);
   $("#restart-service").addEventListener("click", restartService);
@@ -1700,7 +1821,9 @@ if (typeof module !== "undefined") {
     refreshHistoryViewport,
     realtimeYAxisCeiling,
     resolveLocale,
+    matchingTemplateName,
     serviceConfirmationOptions,
+    startRequestBody,
     setLanguageMode,
     slotKvUsage,
     slotStage,

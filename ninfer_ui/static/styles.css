@@ -343,7 +343,7 @@ main { padding: clamp(18px, 2vw, 30px); }
 .field-grid label { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 10px; }
 .field-grid label > span { font-size: 11px; }
 .field-grid label > small { color: var(--quiet); font-size: 9px; text-align: right; }
-.field-grid input, .field-grid select, .history-delete-grid input, .confirm-box input {
+.field-grid input, .field-grid select, .template-controls input, .template-controls select, .history-delete-grid input, .confirm-box input {
   grid-column: 1/-1;
   width: 100%;
   margin-top: 5px;
@@ -356,7 +356,12 @@ main { padding: clamp(18px, 2vw, 30px); }
   font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   transition: border-color .18s, background .18s;
 }
-.field-grid input:focus, .field-grid select:focus, .history-delete-grid input:focus, .confirm-box input:focus { border-color: #47745f; background: var(--surface-raised); }
+.field-grid input:focus, .field-grid select:focus, .template-controls input:focus, .template-controls select:focus, .history-delete-grid input:focus, .confirm-box input:focus { border-color: #47745f; background: var(--surface-raised); }
+.template-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; align-items: end; gap: 18px; }
+.template-controls label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.template-controls input, .template-controls select { margin: 0; }
+.template-controls .button { min-height: 36px; }
+.template-help { margin: 12px 0 0; color: var(--quiet); font-size: 10px; line-height: 1.5; }
 .toggle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px; margin-top: 24px; }
 .toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .toggle input { position: absolute; opacity: 0; pointer-events: none; }
@@ -509,6 +514,7 @@ dialog::backdrop { background: rgba(3,5,6,.8); backdrop-filter: blur(5px); }
   .field-grid, .toggle-grid { grid-template-columns: 1fr; }
   .history-delete-grid { grid-template-columns: 1fr; }
   .form-actions { align-items: stretch; flex-direction: column; }
+  .template-controls { grid-template-columns: 1fr; }
   .form-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
   .form-actions .service-actions { grid-template-columns: repeat(3, 1fr); }
   .form-actions > .button { width: 100%; }

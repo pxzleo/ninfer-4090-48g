@@ -28,6 +28,17 @@ class ConfigConflictError(RuntimeError):
     pass
 
 
+def validate_template_name(name: Any) -> str:
+    if not isinstance(name, str):
+        raise ConfigError("模板名必须是字符串")
+    normalized = name.strip()
+    if not normalized:
+        raise ConfigError("模板名不能为空")
+    if any(ord(character) < 32 for character in normalized):
+        raise ConfigError("模板名不能包含控制字符")
+    return normalized
+
+
 @dataclass(frozen=True)
 class ConfigPreview:
     revision: str
@@ -181,6 +192,8 @@ def _bool_field(config: dict[str, Any], name: str) -> bool:
 
 
 def validate_config(candidate: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(candidate, dict):
+        raise ConfigError("配置必须是对象")
     allowed = {
         "max_context",
         "kv_capacity",
@@ -443,3 +456,77 @@ class ComposeStore:
                 pass
             raise
         return result
+
+
+class ConfigTemplateStore:
+    def __init__(self, path: Path):
+        self.path = path
+
+    def _read(self) -> dict[str, dict[str, Any]]:
+        if not self.path.exists():
+            return {}
+        try:
+            document = json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"配置模板文件 JSON 无效: {exc}") from exc
+        if not isinstance(document, dict) or document.get("version") != 1:
+            raise ConfigError("配置模板文件版本无效")
+        templates = document.get("templates")
+        if not isinstance(templates, dict):
+            raise ConfigError("配置模板文件缺少 templates 对象")
+
+        validated: dict[str, dict[str, Any]] = {}
+        for raw_name, config in templates.items():
+            name = validate_template_name(raw_name)
+            if name != raw_name:
+                raise ConfigError(f"配置模板名包含首尾空白: {raw_name!r}")
+            if not isinstance(config, dict):
+                raise ConfigError(f"配置模板 {name!r} 的配置必须是对象")
+            validated[name] = validate_config(config)
+        return validated
+
+    def list_templates(self) -> list[dict[str, Any]]:
+        templates = self._read()
+        return [
+            {"name": name, "config": templates[name]}
+            for name in sorted(templates, key=str.casefold)
+        ]
+
+    def get(self, name: Any) -> dict[str, Any]:
+        normalized = validate_template_name(name)
+        templates = self._read()
+        try:
+            return templates[normalized]
+        except KeyError as exc:
+            raise ConfigError(f"配置模板不存在: {normalized}") from exc
+
+    def save(
+        self, name: Any, candidate: dict[str, Any], allow_replace: bool = False
+    ) -> tuple[str, bool]:
+        normalized = validate_template_name(name)
+        config = validate_config(candidate)
+        templates = self._read()
+        replaced = normalized in templates
+        if replaced and not allow_replace:
+            raise ConfigConflictError(f"配置模板已存在，请确认覆盖: {normalized}")
+        templates[normalized] = config
+        document = {"version": 1, "templates": templates}
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.", suffix=".tmp", dir=str(self.path.parent)
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(document, handle, ensure_ascii=False, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, self.path)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
+        return normalized, replaced
