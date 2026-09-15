@@ -18,7 +18,7 @@ services:
       - ./manager-tools/cuda-visible-probe:/usr/local/bin/cuda-visible-probe:ro
     command:
       - ninfer-serve
-      - models/qwen3_8_27b.ninfer
+      - models/Qwen3.8-27B-Uncensored.ninfer
       - --host
       - 0.0.0.0
       - --port
