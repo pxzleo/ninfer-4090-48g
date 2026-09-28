@@ -156,7 +156,7 @@ ProgramImplCore::plan_request_base(const PreparedPromptData& prompt,
         (base->vision_control != nullptr ? base->vision_control->items.size() : 0ULL) +
         (base->turn_rewrite_boundary ? 1ULL : 0ULL);
     base->summary.service_work_quanta =
-        projected_service_work(base->summary, 0, prefill_chunk, cold_prefill_splits);
+        projected_service_work(base->summary, 0, service_prefill_chunk, cold_prefill_splits);
     return RequestBasePlan(std::move(base));
 }
 
@@ -291,7 +291,8 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
     const std::size_t prefill_splits = (plan->vision ? plan->vision->uses.size() : 0ULL) +
                                        (plan->turn_checkpoint_capture_frontier ? 1ULL : 0ULL);
     plan->summary.service_work_quanta =
-        projected_service_work(plan->summary, plan->reuse_base, prefill_chunk, prefill_splits);
+        projected_service_work(plan->summary, plan->reuse_base, service_prefill_chunk,
+                               prefill_splits);
     return RequestPlan(std::move(plan));
 }
 

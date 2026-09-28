@@ -162,7 +162,7 @@ contract.
 
 The repository includes [`compose.yaml`](compose.yaml) for a 48 GB memory-upgraded RTX 4090.
 It keeps image and video input enabled while using INT8 KV cache, the model's full native
-262,144-token per-request context, a 524,288-token shared KV pool, and up to eight execution
+262,144-token per-request context, a 360,000-token shared KV pool, and up to four execution
 slots:
 
 ```bash
@@ -175,16 +175,20 @@ The important settings in the supplied profile are:
 | Setting | Value | Meaning |
 |---|---:|---|
 | `--max-context` | `262144` | Maximum context for one request |
-| `--kv-capacity` | `524288` | Shared KV capacity across all active requests |
-| `--max-concurrency` | `8` | Maximum number of execution slots, not eight full 262K contexts |
+| `--model` | `models/Qwen3.8-27B-Uncensored.ninfer` | Local Uncensored artifact |
+| `--kv-capacity` | `360000` | Shared KV capacity across all active requests |
+| `--max-concurrency` | `4` | Maximum number of execution slots, not four full 262K contexts |
+| `--prefill-chunk` | `1024` | Prefill extent when no request is ready to decode |
+| `--prefill-chunk-when-decoding` | `256` | Prefill extent while decode requests are active |
+| `--image-token-budget` | `2048` | Token budget for each image |
 | `--kv-dtype` | `int8` | Higher-precision KV cache than the compressed E8 profiles |
 | `--vision` | enabled | Loads image/video processing support |
 | `--spec mtp --draft-tokens 3` | enabled | MTP speculative decoding |
 | `--log-stats-interval-ms` | `2000` | Two-second runtime statistics for the monitoring UI |
 
 `--max-context` is a per-request limit, while `--kv-capacity` is shared. With the supplied
-values, the scheduler can run up to eight requests when their combined live KV usage fits
-within 524,288 tokens; it cannot hold eight independent 262K contexts at once. Increasing
+values, the scheduler can run up to four requests when their combined live KV usage fits
+within 360,000 tokens; it cannot hold four independent 262K contexts at once. Increasing
 concurrency usually improves aggregate throughput for multiple clients, but reduces the GPU
 time available to each request and can increase latency. The published performance tables in
 this README remain single-request measurements on the standard 24 GB card.

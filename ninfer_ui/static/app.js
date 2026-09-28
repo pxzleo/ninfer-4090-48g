@@ -13,7 +13,9 @@ const I18N = {
     "language.label": "界面语言", "language.auto": "自动", "language.zh": "中文", "language.en": "English",
     "settings.chineseReasoning": "中文思考",
     "settings.chineseReasoningHelp": "新建会话生效",
-    "templates.title": "配置模板", "templates.select": "已保存模板", "templates.none": "不使用模板", "templates.name": "模板名", "templates.namePlaceholder": "例如：8 路并发", "templates.save": "保存当前设置为模板", "templates.saving": "正在保存…", "templates.help": "选择模板会回填设置；服务停止时点击启动，将按所选模板写入配置并启动。", "templates.saved": "模板“{name}”已保存", "templates.replaced": "模板“{name}”已更新", "templates.nameRequired": "请输入模板名", "templates.replaceTitle": "覆盖配置模板", "templates.replaceMessage": "模板“{name}”已经存在。是否用当前设置覆盖？", "templates.replaceButton": "确认覆盖",
+    "settings.prefillChunkWhenDecoding": "解码时预填充分块",
+    "settings.prefillChunkWhenDecodingHelp": "有请求解码时使用，且不超过预填充分块",
+    "templates.title": "配置模板", "templates.select": "已保存模板", "templates.none": "不使用模板", "templates.name": "模板名", "templates.namePlaceholder": "例如：8 路并发", "templates.save": "保存当前设置为模板", "templates.saving": "正在保存…", "templates.delete": "删除模板", "templates.deleting": "正在删除…", "templates.help": "选择模板会回填设置；服务停止时点击启动，将按所选模板写入配置并启动。", "templates.saved": "模板“{name}”已保存", "templates.replaced": "模板“{name}”已更新", "templates.deleted": "模板“{name}”已删除", "templates.nameRequired": "请输入模板名", "templates.replaceTitle": "覆盖配置模板", "templates.replaceMessage": "模板“{name}”已经存在。是否用当前设置覆盖？", "templates.replaceButton": "确认覆盖", "templates.deleteTitle": "删除配置模板", "templates.deleteMessage": "将永久删除模板“{name}”，当前表单中的设置不会改变。", "templates.deleteButton": "确认删除",
     "connection.status": "连接状态", "connection.connecting": "正在连接", "connection.updated": "最后更新", "connection.online": "服务在线", "connection.unavailable": "服务不可用", "connection.failed": "连接失败",
     "action.refresh": "立即刷新", "common.off": "关闭", "common.cancel": "取消", "common.confirm": "确认", "error.network": "网络请求失败，请检查 UI 服务连接",
     "overview.title": "实时运行", "overview.waitingModel": "等待模型信息", "overview.totals": "累计用量",
@@ -33,7 +35,9 @@ const I18N = {
     "language.label": "Language", "language.auto": "Auto", "language.zh": "中文", "language.en": "English",
     "settings.chineseReasoning": "Chinese reasoning",
     "settings.chineseReasoningHelp": "Takes effect for new sessions",
-    "templates.title": "Configuration templates", "templates.select": "Saved template", "templates.none": "Do not use a template", "templates.name": "Template name", "templates.namePlaceholder": "For example: 8-way concurrency", "templates.save": "Save current settings as template", "templates.saving": "Saving…", "templates.help": "Selecting a template fills the settings. When the service is stopped, Start applies the selected template before launching.", "templates.saved": "Template “{name}” saved", "templates.replaced": "Template “{name}” updated", "templates.nameRequired": "Enter a template name", "templates.replaceTitle": "Replace configuration template", "templates.replaceMessage": "Template “{name}” already exists. Replace it with the current settings?", "templates.replaceButton": "Replace",
+    "settings.prefillChunkWhenDecoding": "Prefill chunk while decoding",
+    "settings.prefillChunkWhenDecodingHelp": "Used while any request is decoding; cannot exceed prefill chunk",
+    "templates.title": "Configuration templates", "templates.select": "Saved template", "templates.none": "Do not use a template", "templates.name": "Template name", "templates.namePlaceholder": "For example: 8-way concurrency", "templates.save": "Save current settings as template", "templates.saving": "Saving…", "templates.delete": "Delete template", "templates.deleting": "Deleting…", "templates.help": "Selecting a template fills the settings. When the service is stopped, Start applies the selected template before launching.", "templates.saved": "Template “{name}” saved", "templates.replaced": "Template “{name}” updated", "templates.deleted": "Template “{name}” deleted", "templates.nameRequired": "Enter a template name", "templates.replaceTitle": "Replace configuration template", "templates.replaceMessage": "Template “{name}” already exists. Replace it with the current settings?", "templates.replaceButton": "Replace", "templates.deleteTitle": "Delete configuration template", "templates.deleteMessage": "Template “{name}” will be permanently deleted. The current form settings will not change.", "templates.deleteButton": "Delete",
     "connection.status": "Connection status", "connection.connecting": "Connecting", "connection.updated": "Last updated", "connection.online": "Service online", "connection.unavailable": "Service unavailable", "connection.failed": "Connection failed",
     "action.refresh": "Refresh now", "common.off": "Off", "common.cancel": "Cancel", "common.confirm": "Confirm", "error.network": "Network request failed; check the UI service connection",
     "overview.title": "Live workload", "overview.waitingModel": "Waiting for model information", "overview.totals": "Cumulative usage",
@@ -109,6 +113,7 @@ const state = {
   templates: [],
   selectedTemplate: "",
   templateSaveBusy: false,
+  templateDeleteBusy: false,
   container: {},
   serviceControlBusy: false,
   serviceAction: null,
@@ -223,6 +228,7 @@ function localizeApiError(message) {
     "kv_capacity 不能小于 max_context": "kv_capacity cannot be lower than max_context",
     "kv_capacity 不能超过 max_concurrency × max_context": "kv_capacity cannot exceed max_concurrency × max_context",
     "prefill_chunk 必须是不超过 max_context 的 128 倍数": "prefill_chunk must be a multiple of 128 no greater than max_context",
+    "prefill_chunk_when_decoding 必须是不超过 prefill_chunk 的 128 倍数": "prefill_chunk_when_decoding must be a multiple of 128 no greater than prefill_chunk",
     "default_max_tokens 必须在 1..max_context 之间": "default_max_tokens must be between 1 and max_context",
     "vision_max_tokens 必须在 1..max_context 之间": "vision_max_tokens must be between 1 and max_context",
     "image_token_budget 必须在 0..vision_max_tokens 之间": "image_token_budget must be between 0 and vision_max_tokens",
@@ -1277,7 +1283,7 @@ function syncLogPolling() {
 
 const CONFIG_NUMBER_FIELDS = new Set([
   "max_context", "max_concurrency", "max_pending_requests", "pending_timeout_ms",
-  "prefill_chunk", "draft_tokens", "log_stats_interval_ms", "default_max_tokens",
+  "prefill_chunk", "prefill_chunk_when_decoding", "draft_tokens", "log_stats_interval_ms", "default_max_tokens",
   "vision_max_tokens", "image_token_budget",
 ]);
 const CONFIG_BOOL_FIELDS = new Set([
@@ -1313,6 +1319,13 @@ function renderTemplates(selectedName = "") {
   state.selectedTemplate = state.templates.some(item => item.name === selectedName)
     ? selectedName : "";
   select.value = state.selectedTemplate;
+  syncTemplateDeleteButton();
+}
+
+function syncTemplateDeleteButton() {
+  const button = $("#delete-template");
+  if (!button) return;
+  button.disabled = !state.selectedTemplate || state.templateDeleteBusy;
 }
 
 function selectTemplate(name) {
@@ -1325,6 +1338,7 @@ function selectTemplate(name) {
     populateConfig(state.config);
   }
   $("#config-template").value = state.selectedTemplate;
+  syncTemplateDeleteButton();
 }
 
 function matchingTemplateName(templates, requestedName, config) {
@@ -1396,6 +1410,40 @@ async function saveTemplate() {
     state.templateSaveBusy = false;
     button.disabled = false;
     button.textContent = t("templates.save");
+  }
+}
+
+async function deleteTemplate() {
+  const name = state.selectedTemplate;
+  if (!name || state.templateDeleteBusy) return;
+  const confirmed = await confirmAction({
+    titleKey: "templates.deleteTitle",
+    messageKey: "templates.deleteMessage",
+    buttonKey: "templates.deleteButton",
+    values: {name},
+  });
+  if (!confirmed) return;
+
+  state.templateDeleteBusy = true;
+  const button = $("#delete-template");
+  button.disabled = true;
+  button.textContent = t("templates.deleting");
+  try {
+    const data = await api("/api/config/templates/delete", {
+      method: "POST",
+      body: JSON.stringify({name, confirmation: "DELETE TEMPLATE"}),
+    });
+    state.templates = data.templates;
+    state.selectedTemplate = "";
+    renderTemplates();
+    if ($("#template-name").value.trim() === name) $("#template-name").value = "";
+    toast(t("templates.deleted", {name}));
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.templateDeleteBusy = false;
+    button.textContent = t("templates.delete");
+    syncTemplateDeleteButton();
   }
 }
 
@@ -1705,6 +1753,8 @@ function applyTranslations() {
   if (state.configSaveBusy) $("#save-config").textContent = t("settings.saving");
   renderTemplates(state.selectedTemplate);
   if (state.templateSaveBusy) $("#save-template").textContent = t("templates.saving");
+  $("#delete-template").textContent = t(state.templateDeleteBusy ? "templates.deleting" : "templates.delete");
+  syncTemplateDeleteButton();
   if (state.serviceAction) {
     const progressKey = {
       start: "service.starting",
@@ -1743,10 +1793,12 @@ function bindEvents() {
   $("#reset-config").addEventListener("click", () => loadConfig());
   $("#config-template").addEventListener("change", event => selectTemplate(event.target.value));
   $("#save-template").addEventListener("click", saveTemplate);
+  $("#delete-template").addEventListener("click", deleteTemplate);
   $("#settings-form").addEventListener("input", event => {
     if (!state.config || !(event.target.name in state.config)) return;
     state.selectedTemplate = "";
     $("#config-template").value = "";
+    syncTemplateDeleteButton();
   });
   $("#start-service").addEventListener("click", startService);
   $("#stop-service").addEventListener("click", stopService);

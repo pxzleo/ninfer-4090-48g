@@ -233,13 +233,16 @@ process.stdout.write(JSON.stringify({{
         self.assertIn('"settings.chineseReasoningHelp": "新建会话生效"', app)
         self.assertNotIn('input name="thinking"', html)
 
-    def test_settings_expose_template_save_select_and_named_start(self):
+    def test_settings_expose_template_save_delete_select_and_named_start(self):
         html = APP_HTML.read_text(encoding="utf-8")
         javascript = APP_JS.read_text(encoding="utf-8")
         self.assertIn('id="config-template"', html)
         self.assertIn('id="template-name"', html)
         self.assertIn('id="save-template"', html)
+        self.assertIn('id="delete-template"', html)
         self.assertIn('api("/api/config/templates"', javascript)
+        self.assertIn('api("/api/config/templates/delete"', javascript)
+        self.assertIn('confirmation: "DELETE TEMPLATE"', javascript)
         self.assertIn("else if (state.config)", javascript)
         self.assertIn("if (templateName) await loadConfig(templateName)", javascript)
         self.assertIn("replace: replacing", javascript)

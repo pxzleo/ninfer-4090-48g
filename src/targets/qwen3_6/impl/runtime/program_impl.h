@@ -200,6 +200,7 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
                                  DeviceContext& device_in)
     : model(model_in), device(device_in), capacity(plan.capacity), kv_capacity(plan.kv_capacity),
       max_concurrency(plan.max_concurrency), prefill_chunk(plan.prefill_chunk),
+      service_prefill_chunk(plan.service_prefill_chunk),
       draft_window(plan.draft_window), speculative_backend(plan.speculative_backend),
       kv_dtype(plan.kv_dtype), kv_quant_group(plan.kv_quant_group),
       kv_packed_v(plan.kv_packed_v), kv_rotate_k(plan.kv_rotate_k), kv_rotate_v(plan.kv_rotate_v),
@@ -440,7 +441,8 @@ runtime::AdmissionResources ProgramImplCore::admission_capacity() const noexcept
 runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lane,
                                                                PreparedPromptData&& prompt,
                                                                RequestPlan&& plan,
-                                                               runtime::TransientRegion transient) {
+                                                               runtime::TransientRegion transient,
+                                                               std::uint32_t chunk_limit) {
     if (lane >= max_concurrency) { throw std::out_of_range("request lane is out of range"); }
     SequenceState& sequence = sequences[lane];
     RequestControl& request = requests[lane];
@@ -645,7 +647,7 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
         }
         staged.elapsed_seconds = std::chrono::duration<double>(Clock::now() - started).count();
         request.lifecycle      = Lifecycle::Prefilling;
-        return advance_prefill(sequence, request);
+        return advance_prefill(sequence, request, chunk_limit);
     } catch (...) {
         try {
             device.synchronize();
@@ -655,9 +657,10 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
     }
 }
 
-runtime::PrefillStepResult ProgramImplCore::advance_prefill_lane(std::uint32_t lane) {
+runtime::PrefillStepResult ProgramImplCore::advance_prefill_lane(std::uint32_t lane,
+                                                                 std::uint32_t chunk_limit) {
     if (lane >= max_concurrency) { throw std::out_of_range("request lane is out of range"); }
-    return advance_prefill(sequences[lane], requests[lane]);
+    return advance_prefill(sequences[lane], requests[lane], chunk_limit);
 }
 
 void ProgramImplCore::resolve_prefill_lane(std::uint32_t lane, bool terminal) {
@@ -1677,9 +1680,13 @@ void ProgramImplCore::validate_licensed_tokens(std::span<const TokenId> tokens) 
 }
 
 runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& sequence,
-                                                            RequestControl& request) {
+                                                            RequestControl& request,
+                                                            std::uint32_t chunk_limit) {
     if (request.lifecycle != Lifecycle::Prefilling || !request.prefill) {
         throw std::logic_error("staged prefill step requires an active concurrent request");
+    }
+    if (chunk_limit == 0 || chunk_limit > prefill_chunk) {
+        throw std::invalid_argument("prefill chunk limit is outside the configured workspace");
     }
 
     RequestControl::Prefill& staged = *request.prefill;
@@ -1740,7 +1747,7 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
 
         if (staged.cursor < staged.prompt_tokens) {
             const std::uint32_t nominal =
-                std::min(prefill_chunk, staged.prompt_tokens - staged.cursor);
+                std::min(chunk_limit, staged.prompt_tokens - staged.cursor);
             const bool final_candidate = staged.cursor + nominal == staged.prompt_tokens;
             mark_workspace_usage(staged.prepare_mtp ? workspace_plan.mtp_prefill
                                                     : workspace_plan.text_prefill);

@@ -15,6 +15,7 @@
 #include "ninfer/ops/gqa_attention.h"
 #include "ninfer/ops/bidirectional_gqa_attention.h"
 #include "ninfer/ops/swa.h"
+#include "runtime/contract/prefill_policy.h"
 
 #include <algorithm>
 #include <initializer_list>
@@ -549,6 +550,13 @@ void validate_target_options(DeviceContext& device, const EngineOptions& options
     if (options.prefill_chunk == 0 || options.prefill_chunk % kPrefillChunkAlignment != 0) {
         throw std::invalid_argument("prefill_chunk must be a nonzero multiple of 128");
     }
+    if (options.prefill_chunk_when_decoding == 0 ||
+        options.prefill_chunk_when_decoding % kPrefillChunkAlignment != 0 ||
+        options.prefill_chunk_when_decoding > options.prefill_chunk) {
+        throw std::invalid_argument(
+            "prefill_chunk_when_decoding must be a nonzero multiple of 128 no greater than "
+            "prefill_chunk");
+    }
     if (options.max_concurrency == 0 || options.max_concurrency > kMaximumConcurrency) {
         throw std::invalid_argument("max_concurrency must be in [1,8]");
     }
@@ -622,6 +630,7 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
         "resolved Paged KV capacity exceeds int32"));
     impl->max_concurrency     = inputs.max_concurrency;
     impl->prefill_chunk       = inputs.prefill_chunk;
+    impl->service_prefill_chunk = inputs.service_prefill_chunk;
     impl->draft_window        = inputs.draft_window;
     // DFlash keeps checkpoint state in its own cyclic mirror that only covers the resident
     // checkpoint; older ring entries could not rebuild it, so the ring stays off there.
@@ -728,12 +737,15 @@ std::unique_ptr<qwen3_6::detail::SequencePlannerImpl<Variant>>
 make_sequence_planner_impl(DeviceContext& device, const EngineOptions& options,
                            WeightsProfile weights_profile) {
     validate_target_options(device, options);
+    const runtime::PrefillChunkPolicy prefill_policy =
+        runtime::resolve_prefill_chunk_policy(options);
 
     SequencePlanningInputs inputs{
         .weights_profile     = weights_profile,
         .capacity            = options.max_context,
         .max_concurrency     = options.max_concurrency,
         .prefill_chunk       = std::min(options.prefill_chunk, options.max_context),
+        .service_prefill_chunk = prefill_policy.service_quantum,
         .draft_window        = options.speculative.draft_tokens,
         .turn_checkpoint_ring = options.turn_checkpoint_ring,
         .speculative_backend = options.speculative.backend,

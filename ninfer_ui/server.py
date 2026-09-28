@@ -749,6 +749,17 @@ class UiHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if parsed.path == "/api/config/templates/delete":
+                if body.get("confirmation") != "DELETE TEMPLATE":
+                    raise UiError(HTTPStatus.BAD_REQUEST, "确认文本不正确")
+                with MUTATION_LOCK:
+                    name = TEMPLATES.delete(body.get("name"))
+                    templates = TEMPLATES.list_templates()
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"ok": True, "name": name, "templates": templates},
+                )
+                return
             if parsed.path == "/api/config/apply":
                 if body.get("confirmation") != "APPLY CONFIG":
                     raise UiError(HTTPStatus.BAD_REQUEST, "确认文本不正确")

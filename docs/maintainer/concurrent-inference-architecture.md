@@ -787,10 +787,18 @@ DecodeRound，再 admission selected request 并执行它的 first prefill/final
 ingress 因此不能在两个 donor progress rounds 之间连续 admission 多个 requests，也不能无限延迟 frozen
 frontier 的 decode progress。
 
-Prefill chunk profile 限制插入两个 decode rounds 之间的 GPU 时间。其具体 token/media extent 是经过
-target 和 hardware qualification 的配置，不属于 scheduler semantic。Vision 和其他 prefill GPU phases
-必须本身构成 bounded unit，或已被计入该 chunk 的 latency bound；不存在 scheduler 之外的
-unbounded prefill work。
+Prefill chunk profile 限制插入两个 decode rounds 之间的 GPU 时间。Executor 在每个 boundary 根据当前
+decode membership 选择 extent：没有 `DECODE_READY` request 时使用 `prefill_chunk`；存在任意
+`DECODE_READY` request 时使用 `prefill_chunk_when_decoding`。新 request 在已有 decode rows 时 admission，
+其 first prefill unit 也使用后者；所有 decode rows 离开后，下一 chunk 恢复前者。选择只发生在 boundary，
+不改变 in-flight unit。
+
+两种 extent 都是经过 target 和 hardware qualification 的启动时配置；较大的 `prefill_chunk` 同时定义
+workspace ceiling，`prefill_chunk_when_decoding` 不得超过它。Vision 和其他 prefill GPU phases 必须本身
+构成 bounded unit，或已被计入该 chunk 的 latency bound；不存在 scheduler 之外的 unbounded prefill
+work。Admission 的 temporal work projection 和完成 unit 的 work consumption 都按两种 extent 的最大
+公约数计量，因此每个完整 chunk 都消费整数个 work quanta，且不能因合法的非整除 extent 组合而低估
+scheduler work。
 
 ### 7.4 Joining and leaving decode
 

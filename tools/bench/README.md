@@ -123,7 +123,7 @@ artifacts are supplied. Pass one `--artifact` to select a single target and `--m
 decode corpus with DFlash block=8 (`k=7`) and the optimized proposal head. Add
 `--sampling greedy` to force exact argmax while retaining the same fixtures and repetition count.
 Its schema-v5 result and flattened summaries retain the canonical `weights_id` received from the
-schema-v9 serving startup record. The stochastic route pins its complete
+schema-v10 serving startup record. The stochastic route pins its complete
 temperature/top-p/top-k/min-p/presence/frequency profile explicitly, so model-default changes do
 not alter the measurement method.
 
@@ -165,3 +165,40 @@ python3 tools/bench/run_serve_concurrency.py \
 Use `--kv-capacity auto` when the fixed corpus needs more shared KV than the default 262,144-token
 pool. A point is intentionally not resumable: combining fragments from separate server processes
 would not preserve either a steady interval or one continuous makespan.
+
+## Prefill/decode balance benchmark
+
+`run_prefill_decode_balance.py` measures how much decode service remains while one long prompt owns
+the prefill path. Its synthetic workload mirrors a sampled bimodal serving shape without retaining
+request content: two approximately 110K-token decode anchors, one approximately 8K-token decode
+anchor, then one approximately 110K-token interfering prefill. The server input-token endpoint
+calibrates the repeated neutral corpus independently for every fresh process.
+
+The default sweep runs `1024`, `256`, and `128` token prefill chunks in that order. Every point uses
+the same artifact, KV capacity, MTP3 route, anchor output reservation, prompt targets, baseline
+window, and a fixed 40-second overlap analysis window. Decode retention is derived from complete
+raw throughput intervals retained in the server JSONL, divided by the preceding decode-only
+baseline. The runner still waits for the interfering request's real first output to report TTFT.
+
+```bash
+python3 tools/bench/run_prefill_decode_balance.py \
+  --serve build/apps/ninfer-serve \
+  --artifact models/qwen3_8_27b.ninfer \
+  --output profiles/bench/prefill-decode-balance
+```
+
+The runner owns the selected loopback port and GPU for the duration of the sweep. Stop any resident
+server first, and restore it after the runner exits. A failed point aborts later points so anomalous
+measurements are not silently combined into a completed comparison.
+
+To measure one adaptive policy point while keeping the same sampled workload, pass the normal and
+decode-contended chunks separately:
+
+```bash
+python3 tools/bench/run_prefill_decode_balance.py \
+  --serve build/apps/ninfer-serve \
+  --artifact models/qwen3_8_27b.ninfer \
+  --prefill-chunk 1024 \
+  --prefill-chunk-when-decoding 256 \
+  --output profiles/bench/prefill-decode-balance-adaptive
+```

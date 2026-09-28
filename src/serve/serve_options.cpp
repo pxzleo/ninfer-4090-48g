@@ -1,6 +1,7 @@
 #include "serve/serve_options.h"
 #include "product/speculative_options.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -86,7 +87,8 @@ std::string serve_usage_text(const char* argv0) {
            " <model.ninfer> [--host H] [--port N] [--api-key KEY] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
-           "[--prefill-chunk N] [--turn-checkpoints N] [--log-stats-interval-ms N] [--device N] "
+           "[--prefill-chunk N] [--prefill-chunk-when-decoding N] [--turn-checkpoints N] "
+           "[--log-stats-interval-ms N] [--device N] "
            "[--max-request-mib N] [--request-log-jsonl FILE] [--slot-save-path DIR] "
            "[--auto-save-evicted] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
@@ -149,6 +151,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     bool default_max_tokens_explicit = false;
     bool kv_capacity_explicit        = false;
+    bool contended_prefill_explicit  = false;
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
         options.help_requested = true;
         return options;
@@ -190,6 +193,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--prefill-chunk"), "prefill-chunk"));
+        } else if (arg == "--prefill-chunk-when-decoding") {
+            options.prefill_chunk_when_decoding = static_cast<std::uint32_t>(parse_nonnegative_int(
+                require_value("--prefill-chunk-when-decoding"),
+                "prefill-chunk-when-decoding"));
+            contended_prefill_explicit = true;
         } else if (arg == "--turn-checkpoints") {
             options.turn_checkpoint_ring = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--turn-checkpoints"), "turn-checkpoints"));
@@ -301,6 +309,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
     }
+    if (!contended_prefill_explicit) {
+        options.prefill_chunk_when_decoding = std::min(options.prefill_chunk, 256U);
+    }
     if (options.auto_save_evicted && options.slot_save_path.empty()) {
         throw std::invalid_argument("--auto-save-evicted requires --slot-save-path");
     }
@@ -326,6 +337,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.prefill_chunk == 0 || options.prefill_chunk % 128 != 0) {
         throw std::invalid_argument("--prefill-chunk must be a positive multiple of 128");
+    }
+    if (options.prefill_chunk_when_decoding == 0 ||
+        options.prefill_chunk_when_decoding % 128 != 0 ||
+        options.prefill_chunk_when_decoding > options.prefill_chunk) {
+        throw std::invalid_argument(
+            "--prefill-chunk-when-decoding must be a positive multiple of 128 no greater than "
+            "--prefill-chunk");
     }
     if (!options.enable_thinking && options.reasoning_effort) {
         throw std::invalid_argument("--reasoning-effort cannot be combined with --no-thinking");

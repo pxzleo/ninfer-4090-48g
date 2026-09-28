@@ -42,6 +42,8 @@ COMPOSE = """services:
       - "600000"
       - --prefill-chunk
       - "1024"
+      - --prefill-chunk-when-decoding
+      - "256"
       - --kv-dtype
       - int8
       - --spec
@@ -70,6 +72,30 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(updated["max_concurrency"], 8)
         self.assertEqual(updated["kv_capacity"], "524288")
         self.assertIn('      - "524288"', result.diff)
+
+    def test_updates_decode_contended_prefill_chunk(self) -> None:
+        config = parse_config(COMPOSE)
+        self.assertEqual(config["prefill_chunk_when_decoding"], 256)
+        config["prefill_chunk_when_decoding"] = 128
+        result = preview(COMPOSE, config)
+        self.assertEqual(parse_config(result.rendered)["prefill_chunk_when_decoding"], 128)
+        self.assertIn("--prefill-chunk-when-decoding\n      - \"128\"", result.rendered)
+
+    def test_rejects_decode_contended_prefill_larger_than_workspace(self) -> None:
+        config = parse_config(COMPOSE)
+        config["prefill_chunk"] = 256
+        config["prefill_chunk_when_decoding"] = 512
+        with self.assertRaisesRegex(ConfigError, "prefill_chunk_when_decoding"):
+            preview(COMPOSE, config)
+
+    def test_legacy_small_prefill_defaults_contended_chunk_to_workspace(self) -> None:
+        legacy = COMPOSE.replace(
+            '      - "1024"\n      - --prefill-chunk-when-decoding\n      - "256"',
+            '      - "128"',
+        )
+        config = parse_config(legacy)
+        self.assertEqual(config["prefill_chunk"], 128)
+        self.assertEqual(config["prefill_chunk_when_decoding"], 128)
 
     def test_updates_vision_budgets(self) -> None:
         config = parse_config(COMPOSE)
@@ -233,6 +259,20 @@ class ConfigTemplateStoreTest(unittest.TestCase):
 
             self.assertTrue(replaced)
             self.assertEqual(store.get("日常")["max_pending_requests"], 32)
+
+    def test_deletes_template_without_changing_others(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ConfigTemplateStore(Path(temp) / "templates.json")
+            config = parse_config(COMPOSE)
+            store.save("日常", config)
+            store.save("长上下文", dict(config, max_context=131072))
+
+            self.assertEqual(store.delete(" 日常 "), "日常")
+            self.assertEqual(
+                [item["name"] for item in store.list_templates()], ["长上下文"]
+            )
+            with self.assertRaisesRegex(ConfigError, "不存在"):
+                store.delete("日常")
 
     def test_rejects_empty_or_unknown_template_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -235,7 +235,10 @@
                   <div class="template-controls">
                     <label><span data-i18n="templates.select">已保存模板</span><select id="config-template"><option value="" data-i18n="templates.none">不使用模板</option></select></label>
                     <label><span data-i18n="templates.name">模板名</span><input id="template-name" type="text" autocomplete="off" data-i18n-placeholder="templates.namePlaceholder" placeholder="例如：8 路并发"></label>
-                    <button class="button secondary" type="button" id="save-template" data-i18n="templates.save">保存当前设置为模板</button>
+                    <div class="template-actions">
+                      <button class="button secondary" type="button" id="save-template" data-i18n="templates.save">保存当前设置为模板</button>
+                      <button class="button danger" type="button" id="delete-template" disabled data-i18n="templates.delete">删除模板</button>
+                    </div>
                   </div>
                   <p class="template-help" id="template-help" data-i18n="templates.help">选择模板会回填设置；服务停止时点击启动，将按所选模板写入配置并启动。</p>
                 </fieldset>
@@ -249,6 +252,7 @@
                     <label><span data-i18n="settings.maxQueue">排队上限</span><small data-i18n="settings.maxQueueHelp">不占用执行槽</small><input name="max_pending_requests" type="number" min="1" max="1024" required></label>
                     <label><span data-i18n="settings.queueTimeout">排队超时</span><small data-i18n="settings.milliseconds">毫秒</small><input name="pending_timeout_ms" type="number" min="1" max="3600000" required></label>
                     <label><span data-i18n="settings.prefillChunk">预填充分块</span><small data-i18n="settings.prefillChunkHelp">128 的倍数</small><input name="prefill_chunk" type="number" step="128" min="128" required></label>
+                    <label><span data-i18n="settings.prefillChunkWhenDecoding">解码时预填充分块</span><small data-i18n="settings.prefillChunkWhenDecodingHelp">有请求解码时使用，且不超过预填充分块</small><input name="prefill_chunk_when_decoding" type="number" step="128" min="128" required></label>
                   </div>
                 </fieldset>
 

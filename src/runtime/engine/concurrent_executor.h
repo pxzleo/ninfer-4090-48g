@@ -3,6 +3,7 @@
 // Small fixed-capacity request scheduling and batched decode execution for every backend.
 
 #include "ninfer/types.h"
+#include "runtime/contract/prefill_policy.h"
 #include "runtime/contract/types.h"
 #include "runtime/engine/admission_policy.h"
 #include "runtime/engine/request_memory.h"
@@ -48,6 +49,7 @@ public:
           max_outstanding_(static_cast<std::size_t>(options.max_concurrency) +
                            options.max_pending_requests),
           pending_timeout_(std::chrono::milliseconds(options.pending_timeout_ms)),
+          prefill_policy_(resolve_prefill_chunk_policy(options)),
           auto_save_evicted_(options.auto_save_evicted),
           admission_capacity_(instance.program->admission_capacity()) {
         if (max_concurrency_ == 0 || max_concurrency_ > kMaximumConcurrency ||
@@ -783,7 +785,7 @@ private:
                               const PrefillStepResult& step, bool cancel_at_boundary) {
         cumulative_stats_.computed_prefill_tokens += step.processed_prompt_tokens;
         request->processed_prompt_tokens += step.processed_prompt_tokens;
-        consume_service_work(request, 1);
+        consume_service_work(request, prefill_policy_.service_quanta(step.processed_prompt_tokens));
         if (step.host_input_consumed || step.complete) { request->host_input.reset(); }
         if (cancel_at_boundary) {
             if (!request->lane) { throw std::logic_error("cancelled prefill has no request lane"); }
@@ -822,12 +824,22 @@ private:
             throw std::logic_error("staged prefill lane has invalid request state");
         }
         const auto unit_started       = Clock::now();
-        const PrefillStepResult step  = instance_.program->advance_prefill_lane(lane);
+        const PrefillStepResult step =
+            instance_.program->advance_prefill_lane(lane, selected_prefill_chunk());
         cumulative_stats_.prefill_seconds_total +=
             std::chrono::duration<double>(Clock::now() - unit_started).count();
         const bool cancel_at_boundary = request->cancelled.load(std::memory_order_acquire);
         resolve_prefill_step(request, step, cancel_at_boundary);
         publish_runtime_stats();
+    }
+
+    [[nodiscard]] std::uint32_t selected_prefill_chunk() const noexcept {
+        for (const auto& request : slots_) {
+            if (request != nullptr && request->decode_ready) {
+                return prefill_policy_.select(true);
+            }
+        }
+        return prefill_policy_.select(false);
     }
 
     [[nodiscard]] std::vector<std::shared_ptr<Request>> pending_snapshot() const {
@@ -1015,7 +1027,8 @@ private:
             target_started                = true;
             const auto unit_started       = Clock::now();
             const PrefillStepResult first = instance_.program->start_prefill_lane(
-                lane, std::move(request->prompt), std::move(selected_plan), transient);
+                lane, std::move(request->prompt), std::move(selected_plan), transient,
+                selected_prefill_chunk());
             cumulative_stats_.prefill_seconds_total +=
                 std::chrono::duration<double>(Clock::now() - unit_started).count();
             if (!first.complete && (!prefill_lane_ || *prefill_lane_ != lane)) {
@@ -1358,6 +1371,7 @@ private:
     const std::uint32_t max_concurrency_;
     const std::size_t max_outstanding_;
     const std::chrono::milliseconds pending_timeout_;
+    const PrefillChunkPolicy prefill_policy_;
     const bool auto_save_evicted_;
     const AdmissionResources admission_capacity_;
 

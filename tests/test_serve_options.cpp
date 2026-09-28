@@ -63,6 +63,9 @@ int main() {
                       "--auto-save-evicted without --slot-save-path was not rejected");
     failures += check(defaults.log_stats_interval_ms == 5000,
                       "periodic throughput interval default mismatch");
+    failures += check(defaults.prefill_chunk == 1024 &&
+                          defaults.prefill_chunk_when_decoding == 256,
+                      "adaptive prefill defaults mismatch");
     failures += check(defaults.kv_capacity.mode == ninfer::KvCapacityMode::Explicit &&
                           defaults.kv_capacity.explicit_tokens == defaults.max_context,
                       "default KV capacity does not follow max context");
@@ -120,6 +123,25 @@ int main() {
         parse({"ninfer-serve", "model.ninfer", "--image-token-budget", "1280"});
     failures += check(image_budget.image_token_budget == 1280,
                       "--image-token-budget did not carry the per-image Vision-token ceiling");
+
+    const ServeOptions adaptive_prefill =
+        parse({"ninfer-serve", "model.ninfer", "--prefill-chunk", "1024",
+               "--prefill-chunk-when-decoding", "256"});
+    failures += check(adaptive_prefill.prefill_chunk_when_decoding == 256,
+                      "decode-contended prefill chunk was not applied");
+    const ServeOptions clamped_default_prefill =
+        parse({"ninfer-serve", "model.ninfer", "--prefill-chunk", "128"});
+    failures += check(clamped_default_prefill.prefill_chunk_when_decoding == 128,
+                      "implicit decode-contended prefill chunk did not follow a smaller workspace");
+    bool oversized_contended_prefill_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--prefill-chunk", "256",
+                     "--prefill-chunk-when-decoding", "512"});
+    } catch (const std::invalid_argument&) {
+        oversized_contended_prefill_rejected = true;
+    }
+    failures += check(oversized_contended_prefill_rejected,
+                      "decode-contended prefill chunk larger than the workspace was accepted");
 
     const ServeOptions dflash = parse({"ninfer-serve", "model.ninfer", "--spec", "dflash",
                                        "--draft-tokens", "15", "--lm-head-draft"});

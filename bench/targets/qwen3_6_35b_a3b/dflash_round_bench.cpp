@@ -203,6 +203,7 @@ int run(const Options& options) {
     engine.kv_capacity =
         ninfer::KvCapacityPolicy::explicit_capacity(static_cast<std::uint32_t>(capacity));
     engine.prefill_chunk             = 128;
+    engine.prefill_chunk_when_decoding = 128;
     engine.kv_cache                  = ninfer::KvCacheStorage::BFloat16;
     engine.speculative.backend       = ninfer::SpeculativeBackend::DFlash;
     engine.speculative.draft_tokens  = options.draft_tokens;
@@ -251,8 +252,10 @@ int run(const Options& options) {
         request_memory.activate(request_plan.summary().transient_bytes,
                                 request_plan.summary().transient_alignment);
         auto prefill = program->start_prefill_lane(lane, std::move(prompt), std::move(request_plan),
-                                                   request_memory.region());
-        while (!prefill.complete) { prefill = program->advance_prefill_lane(lane); }
+                                                   request_memory.region(), engine.prefill_chunk);
+        while (!prefill.complete) {
+            prefill = program->advance_prefill_lane(lane, engine.prefill_chunk);
+        }
         request_memory.deactivate();
         if (prefill.round.tokens.size() != 1) {
             throw std::runtime_error("benchmark seed prefill did not license exactly one token");

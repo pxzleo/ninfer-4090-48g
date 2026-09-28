@@ -91,6 +91,9 @@ struct EngineOptions {
     std::uint32_t max_pending_requests = 16;
     std::uint32_t pending_timeout_ms   = 30000;
     std::uint32_t prefill_chunk        = 1024;
+    // Prefill extent selected at a scheduler boundary while any admitted request is decode-ready.
+    // The larger prefill_chunk remains the workspace ceiling and the uncontended extent.
+    std::uint32_t prefill_chunk_when_decoding = 256;
     // Retained host-side turn checkpoints per lane (0 disables the ring). Each entry snapshots
     // the linear-attention state at a past turn boundary so a prompt that diverges mid-history
     // re-prefills from the nearest checkpoint instead of from zero. Host memory cost per entry

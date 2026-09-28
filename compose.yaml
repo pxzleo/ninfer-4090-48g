@@ -28,15 +28,17 @@ services:
       - --max-context
       - "262144"
       - --kv-capacity
-      - "600000"
+      - "360000"
       - --max-concurrency
-      - "8"
+      - "4"
       - --max-pending-requests
       - "16"
       - --pending-timeout-ms
       - "600000"
       - --prefill-chunk
       - "1024"
+      - --prefill-chunk-when-decoding
+      - "256"
       - --kv-dtype
       - int8
       - --spec
@@ -54,6 +56,8 @@ services:
       - "8192"
       - --default-max-tokens
       - "32000"
+      - --image-token-budget
+      - "2048"
     deploy:
       resources:
         reservations:
