@@ -28,9 +28,9 @@ services:
       - --max-context
       - "262144"
       - --kv-capacity
-      - "360000"
+      - "760000"
       - --max-concurrency
-      - "4"
+      - "8"
       - --max-pending-requests
       - "16"
       - --pending-timeout-ms
