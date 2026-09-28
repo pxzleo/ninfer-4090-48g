@@ -93,6 +93,7 @@ FrontendResources resources(const std::string& chat_template = thinking_toggle_t
         {added(1, "helloST"), added(2, "OPtail"), added(3, "thought</thi"),
          added(4, "nk>\n\nanswer"), added(6, "<eos>", true), added(7, "<0.0 seconds>"),
          added(30, "user\n"), added(31, "assistant\n"), added(32, "\n"),
+         added(33, "<tool_response>"), added(34, "</tool_response>"),
          added(248045, "<|im_start|>", true), added(248046, "<|im_end|>", true),
          added(248053, "<|vision_start|>", true), added(248054, "<|vision_end|>", true),
          added(248056, "<|image_pad|>", true), added(248057, "<|video_pad|>", true),
@@ -630,6 +631,12 @@ int test_turn_rewrite_trace() {
                   *open.turn_rewrite_byte_offset == first_header + assistant_header.size(),
               "tool loop did not retain its first assistant rewrite boundary");
 
+    const std::size_t generation_header = open.text.rfind(assistant_header);
+    failures += check(open.generation_byte_offset &&
+                          *open.generation_byte_offset == generation_header + assistant_header.size() &&
+                          *open.generation_byte_offset > *open.turn_rewrite_byte_offset,
+                      "tool loop did not publish its latest generation boundary");
+
     fi::ChatRenderOptions preserve;
     preserve.preserve_thinking       = true;
     const fi::RenderedChat preserved = render_chat(tool_loop, preserve);
@@ -648,7 +655,7 @@ int test_turn_rewrite_trace() {
     no_generation.add_generation_prompt = false;
     const fi::RenderedChat no_assistant =
         render_chat({chat_message("user", "question")}, no_generation);
-    failures += check(!no_assistant.turn_rewrite_byte_offset,
+    failures += check(!no_assistant.turn_rewrite_byte_offset && !no_assistant.generation_byte_offset,
                       "boundary-less prompt unexpectedly published a rewrite boundary");
 
     const fi::RenderedChat wrapped =
@@ -710,12 +717,28 @@ int test_text_and_image_prepare(const Frontend& frontend) {
     int failures =
         check(text_data.token_ids == expected, "text frontend did not render/tokenize chat");
     failures += check(text_data.identity.turn_rewrite_boundary == 7 &&
+                          text_data.identity.generation_boundary == 7 &&
                           text_data.starts_in_reasoning && !text_data.has_media(),
                       "text frontend did not preserve prefix/thinking identity");
     failures +=
         check(text_data.position_axis(0).back() == 8 && text_data.position_axis(1).back() == 8 &&
                   text_data.position_axis(2).back() == 8,
               "text frontend did not construct axis-major positions");
+
+    ninfer::PromptInput tool_history;
+    for (const std::string role : {"user", "assistant", "tool"}) {
+        ninfer::ChatMessage message;
+        message.role = role;
+        message.parts.push_back(ninfer::MessagePart{
+            .kind = ninfer::MessagePartKind::Text, .text = "x", .media = {}});
+        tool_history.messages.push_back(std::move(message));
+    }
+    const auto prepared_history = frontend.prepare(std::move(tool_history));
+    const auto& history_data = FrontendFactory::inspect(prepared_history);
+    failures += check(history_data.identity.turn_rewrite_boundary == 7 &&
+                          history_data.identity.generation_boundary == history_data.token_ids.size() - 2 &&
+                          history_data.token_ids[*history_data.identity.generation_boundary] == 248068,
+                      "tool history token boundaries did not preserve the user anchor before advancing generation");
 
     ninfer::MessagePart image;
     image.kind              = ninfer::MessagePartKind::Media;
@@ -755,6 +778,7 @@ int test_text_and_image_prepare(const Frontend& frontend) {
         prepared_data.patches.size() == 16 * 1536 && prepared_data.prepare.raw_patches == 16 &&
             prepared_data.prepare.vision_tokens == 4 && prepared_data.identity.reusable &&
             prepared_data.identity.turn_rewrite_boundary &&
+            prepared_data.identity.generation_boundary == prepared_data.identity.turn_rewrite_boundary &&
             *prepared_data.identity.turn_rewrite_boundary < prepared_data.token_ids.size(),
         "image frontend did not own the expected patch payload and identity");
     if (prepared_data.patches.size() == 16 * 1536) {

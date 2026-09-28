@@ -359,14 +359,16 @@ RenderedChat expand_placeholders(RenderedChat rendered, const std::vector<Vision
             throw std::invalid_argument("chat media order does not match rendered placeholders");
         }
         const std::string replacement = placeholder(item);
-        if (rendered.turn_rewrite_byte_offset) {
-            const std::size_t boundary = *rendered.turn_rewrite_byte_offset;
+        for (auto* checkpoint_offset : {&rendered.turn_rewrite_byte_offset,
+                                        &rendered.generation_byte_offset}) {
+            if (!*checkpoint_offset) { continue; }
+            const std::size_t boundary = **checkpoint_offset;
             const std::size_t end      = position + needle.size();
             if (position < boundary && boundary < end) {
                 throw std::logic_error("turn rewrite boundary intersects a media placeholder");
             }
             if (end <= boundary) {
-                *rendered.turn_rewrite_byte_offset = boundary - needle.size() + replacement.size();
+                **checkpoint_offset = boundary - needle.size() + replacement.size();
             }
         }
         rendered.text.replace(position, needle.size(), replacement);
@@ -525,20 +527,25 @@ std::span<const std::int32_t> ProcessedInput::position_axis(int axis) const {
 EncodedChat encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat& rendered) {
     EncodedChat encoded;
     encoded.input_ids = tokenizer.encode(rendered.text);
-    if (!rendered.turn_rewrite_byte_offset) { return encoded; }
-    if (*rendered.turn_rewrite_byte_offset > rendered.text.size()) {
-        throw std::logic_error("turn rewrite byte offset exceeds rendered chat");
-    }
-    const std::vector<int> prefix = tokenizer.encode(
-        std::string_view(rendered.text).substr(0, *rendered.turn_rewrite_byte_offset));
-    if (prefix.empty() || prefix.size() >= encoded.input_ids.size() ||
-        !std::equal(prefix.begin(), prefix.end(), encoded.input_ids.begin())) {
-        throw std::logic_error("turn rewrite prefix is not an exact token prefix");
-    }
-    if (prefix.size() > std::numeric_limits<std::uint32_t>::max()) {
-        throw std::overflow_error("turn rewrite token boundary exceeds uint32");
-    }
-    encoded.turn_rewrite_boundary = static_cast<std::uint32_t>(prefix.size());
+    const auto encode_boundary = [&](std::optional<std::size_t> offset) {
+        std::optional<std::uint32_t> boundary;
+        if (!offset) { return boundary; }
+        if (*offset > rendered.text.size()) {
+            throw std::logic_error("checkpoint byte offset exceeds rendered chat");
+        }
+        const std::vector<int> prefix = tokenizer.encode(
+            std::string_view(rendered.text).substr(0, *offset));
+        if (prefix.empty() || prefix.size() >= encoded.input_ids.size() ||
+            !std::equal(prefix.begin(), prefix.end(), encoded.input_ids.begin())) {
+            throw std::logic_error("checkpoint boundary is not an exact token prefix");
+        }
+        if (prefix.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::overflow_error("checkpoint token boundary exceeds uint32");
+        }
+        return std::optional<std::uint32_t>(static_cast<std::uint32_t>(prefix.size()));
+    };
+    encoded.turn_rewrite_boundary = encode_boundary(rendered.turn_rewrite_byte_offset);
+    encoded.generation_boundary = encode_boundary(rendered.generation_byte_offset);
     return encoded;
 }
 
@@ -609,6 +616,7 @@ ProcessedInput Processor::process(const std::vector<ChatMessage>& messages,
     EncodedChat encoded          = encode_rendered_chat(tokenizer_, rendered);
     output.input_ids             = std::move(encoded.input_ids);
     output.turn_rewrite_boundary = encoded.turn_rewrite_boundary;
+    output.generation_boundary = encoded.generation_boundary;
     output.token_types.resize(output.input_ids.size(), 0);
     for (std::size_t i = 0; i < output.input_ids.size(); ++i) {
         if (output.input_ids[i] == kImageToken) {

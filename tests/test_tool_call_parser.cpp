@@ -68,6 +68,9 @@ int test_multiple_calls_and_json_values() {
     const Json first = Json::parse(parsed.tool_calls[0].arguments_json);
     failures += check(first.at("payload").at("ok") == true, "object parameter bool");
     failures += check(first.at("payload").at("items").at(1) == 2, "object parameter array");
+    failures += check(parsed.tool_calls[0].arguments_json ==
+                          R"({"payload":{"ok":true,"items":[1,2]}})",
+                      "nested JSON object order changed during API serialization");
     const Json second = Json::parse(parsed.tool_calls[1].arguments_json);
     failures += check(second.at("value") == "plain text", "plain text parameter string");
     return failures;
@@ -87,6 +90,30 @@ int test_string_typed_json_literal_stays_string() {
                       "string-typed JSON literal was eagerly deserialized");
     failures += check(args.at("count").is_number_integer() && args.at("count") == 7,
                       "integer-typed parameter was not deserialized");
+    return failures;
+}
+
+int test_parameter_order_and_whitespace() {
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(
+        "<tool_call>\n<function=edit>\n"
+        "<parameter=path>\nfile.cpp\n</parameter>\n"
+        "<parameter=newString>\n    first();  \n\n    second();\n\n</parameter>\n"
+        "<parameter=oldString>  inline value  </parameter>\n"
+        "<parameter=empty>\n\n</parameter>\n"
+        "<parameter=crlf>\r\n  code(); \r\n\r\n</parameter>\n"
+        "</function>\n</tool_call>", 64);
+    int failures = check(parsed.is_tool_call_response, "whitespace call parsed");
+    if (parsed.tool_calls.size() != 1) { return failures + fail("expected one edit call"); }
+    const auto args = nlohmann::ordered_json::parse(parsed.tool_calls[0].arguments_json);
+    std::vector<std::string> keys;
+    for (auto it = args.begin(); it != args.end(); ++it) { keys.push_back(it.key()); }
+    failures += check(keys == std::vector<std::string>{"path", "newString", "oldString", "empty", "crlf"},
+                      "parameter order changed during API serialization");
+    failures += check(args["newString"] == "    first();  \n\n    second();\n",
+                      "code indentation or value whitespace was discarded");
+    failures += check(args["oldString"] == "  inline value  ", "inline string whitespace discarded");
+    failures += check(args["empty"] == "", "empty framed string changed");
+    failures += check(args["crlf"] == "  code(); \r\n", "CRLF content whitespace discarded");
     return failures;
 }
 
@@ -180,6 +207,7 @@ int test_incremental_filter_fallback() {
 int main() {
     int failures = 0;
     failures += test_single_call();
+    failures += test_parameter_order_and_whitespace();
     failures += test_multiple_calls_and_json_values();
     failures += test_string_typed_json_literal_stays_string();
     failures += test_malformed_falls_back_to_text();

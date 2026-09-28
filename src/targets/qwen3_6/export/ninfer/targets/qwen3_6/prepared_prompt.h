@@ -42,6 +42,7 @@ struct VisionItem {
 struct PromptIdentity {
     bool reusable = true;
     std::optional<std::uint32_t> turn_rewrite_boundary;
+    std::optional<std::uint32_t> generation_boundary;
 };
 
 struct PrepareStats {

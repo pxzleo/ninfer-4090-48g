@@ -16,16 +16,17 @@
 namespace ninfer::serve {
 namespace {
 
-using Json = nlohmann::json;
+using Json = nlohmann::ordered_json;
 
-std::string trim_ascii(std::string_view text) {
-    std::size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
-        ++begin;
-    }
-    std::size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) { --end; }
-    return std::string(text.substr(begin, end - begin));
+// The template wraps a parameter value in one newline on either side. Remove only
+// those framing newlines: indentation, blank lines and trailing spaces belong to
+// the string value. Inline values have no framing to remove.
+std::string parameter_value(std::string_view text) {
+    if (text.starts_with("\r\n")) { text.remove_prefix(2); }
+    else if (text.starts_with("\n")) { text.remove_prefix(1); }
+    if (text.ends_with("\r\n")) { text.remove_suffix(2); }
+    else if (text.ends_with("\n")) { text.remove_suffix(1); }
+    return std::string(text);
 }
 
 std::string rtrim_ascii(std::string_view text) {
@@ -79,7 +80,7 @@ bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args,
     pos                         = name_end + 1;
     const std::size_t value_end = inner.find(kParamClose, pos);
     if (value_end == std::string_view::npos) { return false; }
-    const std::string raw_value = trim_ascii(inner.substr(pos, value_end - pos));
+    const std::string raw_value = parameter_value(inner.substr(pos, value_end - pos));
     Json parsed = Json::parse(raw_value, nullptr, false);
     const auto tool_it = param_types.find(tool_name);
     const bool allow_deserialization =

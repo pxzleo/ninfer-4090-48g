@@ -97,6 +97,7 @@ struct ProcessedInput {
     std::vector<float> patches;
     std::vector<VisionItem> vision_items;
     std::optional<std::uint32_t> turn_rewrite_boundary;
+    std::optional<std::uint32_t> generation_boundary;
     PreprocessStats stats;
 
     [[nodiscard]] std::span<const std::int32_t> position_axis(int axis) const;
@@ -105,6 +106,7 @@ struct ProcessedInput {
 struct EncodedChat {
     std::vector<int> input_ids;
     std::optional<std::uint32_t> turn_rewrite_boundary;
+    std::optional<std::uint32_t> generation_boundary;
 };
 
 EncodedChat encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat& rendered);

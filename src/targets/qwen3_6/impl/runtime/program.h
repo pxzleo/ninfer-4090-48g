@@ -56,6 +56,7 @@ struct RequestBasePlanImpl<NINFER_QWEN36_VARIANT> {
     std::shared_ptr<const qwen3_6::VisionControl> vision_control;
     std::size_t vision_transient_bytes = 0;
     std::optional<std::uint32_t> turn_rewrite_boundary;
+    std::optional<std::uint32_t> generation_boundary;
     bool allow_prefix_reuse = false;
 };
 
@@ -71,6 +72,7 @@ struct RequestPlanImpl<NINFER_QWEN36_VARIANT> {
     NINFER_QWEN36_RUNTIME_NS::TurnCheckpointAction turn_checkpoint_action =
         NINFER_QWEN36_RUNTIME_NS::TurnCheckpointAction::Drop;
     std::optional<std::uint32_t> turn_checkpoint_capture_frontier;
+    std::optional<std::uint32_t> user_checkpoint_capture_frontier;
     ops::SamplingConfig sampling;
     std::uint32_t text_kv_page_entitlement    = 0;
     std::uint32_t backend_kv_page_entitlement = 0;
@@ -133,6 +135,7 @@ struct HostTurnCheckpoint {
 // the lane drains it into the ring (event-synchronized) or discards it when the divergence
 // point invalidated it.
 struct CheckpointStaging {
+    bool user_anchor       = false;
     bool pending           = false;
     std::uint32_t frontier = 0;
     std::string session_digest;
@@ -184,6 +187,8 @@ struct SequenceState {
     bool tail_hidden_valid        = false;
     bool retained                 = false;
     TurnCheckpoint turn_checkpoint;
+    // Independent of the optional history ring; never compacted away.
+    std::optional<HostTurnCheckpoint> user_turn_checkpoint;
     // Host ring of past turn checkpoints, ascending by frontier. Populated only when the
     // Program was planned with a non-zero turn checkpoint ring.
     std::vector<HostTurnCheckpoint> checkpoint_ring;
@@ -204,6 +209,7 @@ struct RequestControl {
         std::unique_ptr<schedule::VisionPrefillSession> vision;
         runtime::TransientRegion transient;
         std::optional<std::uint32_t> turn_checkpoint_capture_frontier;
+    std::optional<std::uint32_t> user_checkpoint_capture_frontier;
         std::uint32_t base               = 0;
         std::uint32_t cursor             = 0;
         std::uint32_t prompt_tokens      = 0;
@@ -350,12 +356,12 @@ private:
     [[nodiscard]] std::size_t checkpoint_recurrent_bytes() const noexcept;
     [[nodiscard]] std::size_t checkpoint_entry_bytes() const noexcept;
     [[nodiscard]] std::uint8_t* checkpoint_staging_base(std::uint32_t lane) const noexcept;
-    void stage_turn_checkpoint(SequenceState& sequence);
+    void stage_turn_checkpoint(SequenceState& sequence, bool user_anchor = false);
     void drain_checkpoint_staging(SequenceState& sequence);
     void discard_checkpoint_staging(SequenceState& sequence) noexcept;
     void invalidate_checkpoint_ring(SequenceState& sequence,
                                     std::uint32_t keep_through) noexcept;
-    [[nodiscard]] bool upload_ring_checkpoint(SequenceState& sequence, std::uint32_t frontier);
+    [[nodiscard]] bool upload_host_checkpoint(SequenceState& sequence, std::uint32_t frontier);
     void append_ring_checkpoint(SequenceState& sequence, HostTurnCheckpoint&& entry);
     void prepare_graphs();
     void install_sampling(SequenceState& sequence, RequestControl& request,

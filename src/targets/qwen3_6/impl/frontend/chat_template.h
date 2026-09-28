@@ -81,6 +81,7 @@ struct ChatRenderOptions {
 struct RenderedChat {
     std::string text;
     std::optional<std::size_t> turn_rewrite_byte_offset;
+    std::optional<std::size_t> generation_byte_offset;
 };
 
 enum class ChatTemplateSemantics : std::uint8_t {

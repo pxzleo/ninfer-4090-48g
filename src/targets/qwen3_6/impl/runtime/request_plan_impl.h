@@ -152,9 +152,19 @@ ProgramImplCore::plan_request_base(const PreparedPromptData& prompt,
         }
         base->turn_rewrite_boundary = candidate;
     }
+    if (prompt.identity.generation_boundary) {
+        const std::uint32_t candidate = *prompt.identity.generation_boundary;
+        if (candidate == 0 || candidate >= base->summary.prompt_tokens ||
+            (base->turn_rewrite_boundary && candidate < *base->turn_rewrite_boundary)) {
+            throw std::invalid_argument("generation boundary must follow the user boundary inside the prompt");
+        }
+        base->generation_boundary = candidate;
+    }
     const std::size_t cold_prefill_splits =
         (base->vision_control != nullptr ? base->vision_control->items.size() : 0ULL) +
-        (base->turn_rewrite_boundary ? 1ULL : 0ULL);
+        (base->turn_rewrite_boundary ? 1ULL : 0ULL) +
+        (base->generation_boundary && base->generation_boundary != base->turn_rewrite_boundary
+             ? 1ULL : 0ULL);
     base->summary.service_work_quanta =
         projected_service_work(base->summary, 0, service_prefill_chunk, cold_prefill_splits);
     return RequestBasePlan(std::move(base));
@@ -188,25 +198,23 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
                                             sequence.execution_frontier)) {
             plan->reuse      = ReusePath::AppendAtFrontier;
             plan->reuse_base = sequence.execution_frontier;
-        } else if (sequence.turn_checkpoint.valid && sequence.turn_checkpoint.frontier != 0 &&
-                   sequence.turn_checkpoint.frontier < prompt.token_ids.size() &&
-                   qwen3_6::detail::prefix_matches(prompt, sequence.ledger,
-                                                   sequence.prefix_identity,
-                                                   sequence.turn_checkpoint.frontier)) {
-            plan->reuse      = ReusePath::RestoreTurnCheckpoint;
-            plan->reuse_base = sequence.turn_checkpoint.frontier;
         } else {
-            // Deepest-first walk of the host checkpoint ring: a prompt that diverged before
-            // the resident checkpoint can still restore at an older turn boundary. Execution
-            // re-lands the matched entry in the device checkpoint slot.
-            for (auto entry = sequence.checkpoint_ring.rbegin();
-                 entry != sequence.checkpoint_ring.rend(); ++entry) {
-                if (entry->frontier != 0 && entry->frontier < prompt.token_ids.size() &&
+            const auto consider = [&](std::uint32_t frontier) {
+                if (frontier != 0 && frontier < prompt.token_ids.size() &&
+                    frontier > plan->reuse_base &&
                     qwen3_6::detail::prefix_matches(prompt, sequence.ledger,
-                                                    sequence.prefix_identity, entry->frontier)) {
-                    plan->reuse      = ReusePath::RestoreTurnCheckpoint;
-                    plan->reuse_base = entry->frontier;
-                    break;
+                                                    sequence.prefix_identity, frontier)) {
+                    plan->reuse = ReusePath::RestoreTurnCheckpoint;
+                    plan->reuse_base = frontier;
+                }
+            };
+            if (sequence.turn_checkpoint.valid) { consider(sequence.turn_checkpoint.frontier); }
+            if (speculative_backend != SpeculativeBackend::DFlash) {
+                if (sequence.user_turn_checkpoint) {
+                    consider(sequence.user_turn_checkpoint->frontier);
+                }
+                for (const HostTurnCheckpoint& entry : sequence.checkpoint_ring) {
+                    consider(entry.frontier);
                 }
             }
         }
@@ -234,7 +242,25 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
         plan->reuse_base = 0;
     }
 
-    const std::optional<std::uint32_t> desired = base.turn_rewrite_boundary;
+    // DFlash also owns a cyclic local-KV checkpoint. Keep its existing user-turn
+    // frontier until that backend supports host checkpoint restoration.
+    const std::optional<std::uint32_t> desired =
+        speculative_backend == SpeculativeBackend::DFlash || !base.generation_boundary
+            ? base.turn_rewrite_boundary : base.generation_boundary;
+    if (speculative_backend != SpeculativeBackend::DFlash && base.turn_rewrite_boundary) {
+        const bool keep_anchor = plan->reuse != ReusePath::FullReset &&
+            sequence.user_turn_checkpoint &&
+            sequence.user_turn_checkpoint->frontier == *base.turn_rewrite_boundary &&
+            qwen3_6::detail::prefix_matches(prompt, sequence.ledger, sequence.prefix_identity,
+                                            *base.turn_rewrite_boundary);
+        if (!keep_anchor) {
+            if (*base.turn_rewrite_boundary <= plan->reuse_base) {
+                plan->reuse = ReusePath::FullReset;
+                plan->reuse_base = 0;
+            }
+            plan->user_checkpoint_capture_frontier = base.turn_rewrite_boundary;
+        }
+    }
     const bool can_keep                        = desired && plan->reuse != ReusePath::FullReset &&
                           sequence.turn_checkpoint.valid &&
                           sequence.turn_checkpoint.frontier == *desired &&
@@ -253,6 +279,10 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
         plan->turn_checkpoint_capture_frontier = desired;
     }
 
+    if (plan->reuse == ReusePath::FullReset &&
+        speculative_backend != SpeculativeBackend::DFlash) {
+        plan->user_checkpoint_capture_frontier = base.turn_rewrite_boundary;
+    }
     plan->summary.reusable_prompt_tokens = plan->reuse_base;
     if (speculative_backend == SpeculativeBackend::Mtp) {
         if (plan->reuse == ReusePath::FullReset) {
@@ -289,7 +319,10 @@ RequestPlan ProgramImplCore::plan_request_for_lane(std::uint32_t lane,
     }
 
     const std::size_t prefill_splits = (plan->vision ? plan->vision->uses.size() : 0ULL) +
-                                       (plan->turn_checkpoint_capture_frontier ? 1ULL : 0ULL);
+        (plan->turn_checkpoint_capture_frontier ? 1ULL : 0ULL) +
+        (plan->user_checkpoint_capture_frontier &&
+         plan->user_checkpoint_capture_frontier != plan->turn_checkpoint_capture_frontier
+             ? 1ULL : 0ULL);
     plan->summary.service_work_quanta =
         projected_service_work(plan->summary, plan->reuse_base, service_prefill_chunk,
                                prefill_splits);

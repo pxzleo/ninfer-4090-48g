@@ -60,7 +60,8 @@ cannot be combined with `--vision`. A later request cannot enable a capability o
 
 `--slot-save-path DIR` enables llama.cpp-compatible slot persistence. `save` writes slot
 `{id}`'s complete resident session - paged Text and MTP KV in logical page order, GDN
-linear-attention state, the MTP tail hidden, the turn checkpoint, and the resident prefix
+linear-attention state, the MTP tail hidden, the generation checkpoint, the independent
+user-turn checkpoint, the optional history ring, and the resident prefix
 identity - to `DIR/filename` from a `{"filename": NAME}` body; `restore` rebuilds the slot
 from such a file (evicting whatever it retained); `erase` evicts the slot and reports its
 depth. Names are one conservative path component: 1-128 bytes of `[A-Za-z0-9._-]` with no
@@ -82,14 +83,14 @@ always persists or evicts exactly the session it means - a mismatch (including a
 session) answers 409 `slot_session_mismatch`. Snapshots bind to the exact weights identity, KV
 dtype/geometry, and speculative configuration, and restore refuses anything mismatched.
 Sizing: roughly the configured KV bytes per token times session depth, plus a fixed GDN
-state block (about 300 MiB with a held turn checkpoint on Qwen3.8-27B); a 6.9k-token
-session measures 416 MiB, saving in ~0.24 s and restoring in ~0.12 s on NVMe. The DFlash
+state block (about 441 MiB with both checkpoints on Qwen3.8-27B). The DFlash
 backend is not supported.
 
-When `--turn-checkpoints` is active, a snapshot also carries the slot's checkpoint ring at
-about 147 MiB per entry (format version 2; a snapshot with an empty ring stays version 1,
-which binaries without ring support keep reading). The restored ring lets a later
-mid-history edit reuse the session; see
+Snapshots always use format version 3; earlier versions are rejected and must be
+saved again with the current binary. Each optional ring entry adds about 147 MiB.
+The user-turn checkpoint survives restore even with `--turn-checkpoints 0`.
+Generation boundaries limit rewinds caused by decoded text being re-encoded to
+different token IDs. The restored ring lets a later mid-history edit reuse the session; see
 [turn-checkpoint-ring.md](turn-checkpoint-ring.md).
 
 A successful save or restore binds the slot to its file. With `--auto-save-evicted`, an
@@ -316,6 +317,10 @@ Ordinary model/string stops produce `completed`. Output-token or context-capacit
 produces `incomplete` with `incomplete_details.reason: "max_output_tokens"`. Errors accepted after
 an SSE response has started produce `response.failed`; validation and preparation errors remain
 normal HTTP error responses.
+
+Tool-call arguments preserve model parameter order, including nested JSON object
+order. String parameters preserve indentation, trailing spaces, and blank lines;
+only one opening and closing line break used to frame a parameter is removed.
 
 Usage is checkpoint-native:
 

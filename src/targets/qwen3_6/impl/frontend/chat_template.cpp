@@ -426,6 +426,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
 
     const long last_query_index = last_real_user_query(messages);
     std::optional<std::size_t> turn_rewrite_byte_offset;
+    std::optional<std::size_t> generation_byte_offset;
 
     int image_count = 0;
     int video_count = 0;
@@ -498,6 +499,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
     if (options.add_generation_prompt) {
         rendered += "<|im_start|>assistant\n";
         if (!turn_rewrite_byte_offset) { turn_rewrite_byte_offset = rendered.size(); }
+        generation_byte_offset = rendered.size();
         if (options.enable_thinking) {
             rendered += "<think>\n";
             if (options.reasoning_language == ReasoningLanguage::SimplifiedChinese) {
@@ -510,7 +512,8 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         }
     }
     return RenderedChat{.text                     = std::move(rendered),
-                        .turn_rewrite_byte_offset = turn_rewrite_byte_offset};
+                        .turn_rewrite_byte_offset = turn_rewrite_byte_offset,
+                        .generation_byte_offset = generation_byte_offset};
 }
 
 } // namespace ninfer::targets::qwen3_6::frontend_internal

@@ -438,6 +438,104 @@ int exercise_turn_checkpoint_ring(const char* artifact) {
     return 0;
 }
 
+// A cold tool history must capture both the user anchor and the latest generation
+// boundary, including with the optional history ring disabled and after persistence.
+int exercise_generation_checkpoints(const char* artifact) {
+    ninfer::EngineOptions config = engine_options(artifact);
+    config.enable_vision = false;
+    config.turn_checkpoint_ring = 0;
+    ninfer::Engine engine(config);
+    auto message = [](std::string role, std::string text) {
+        ninfer::ChatMessage result;
+        result.role = std::move(role);
+        result.parts.push_back(ninfer::MessagePart{
+            .kind = ninfer::MessagePartKind::Text, .text = std::move(text), .media = {}});
+        return result;
+    };
+    auto chat = [](std::vector<ninfer::ChatMessage> messages) {
+        ninfer::PromptInput result;
+        result.messages = std::move(messages);
+        result.options.enable_thinking = false;
+        return result;
+    };
+    auto options = [](bool reuse) {
+        ninfer::RequestOptions result;
+        result.execution.requested_output_tokens = 8;
+        result.execution.sampling.temperature = 0.0F;
+        result.execution.allow_prefix_reuse = reuse;
+        result.stop.include_model_defaults = false;
+        return result;
+    };
+    const auto user = message("user", "Use the results to name two colors.");
+    const auto early = message("assistant", "I will inspect the first result.");
+    const auto tool = message("tool", "The available colors are red and blue.");
+    const auto first = engine.generate(engine.prepare(chat({user, early, tool})), options(true));
+    const auto states = engine.slot_states();
+    if (states.size() != 1 || states[0].checkpoints.size() != 2) {
+        std::cerr << "cold tool history did not retain both checkpoints with ring disabled\n";
+        return 1;
+    }
+    const auto user_frontier = states[0].checkpoints.front().frontier;
+    const auto generation_frontier = states[0].checkpoints.back().frontier;
+    if (generation_frontier <= user_frontier) {
+        std::cerr << "generation checkpoint did not advance past the user anchor\n";
+        return 1;
+    }
+    const std::string path =
+        (std::filesystem::temp_directory_path() / "ninfer-generation-checkpoints.bin").string();
+    struct FileGuard {
+        std::string path;
+        ~FileGuard() { (void)std::remove(path.c_str()); }
+    } guard{path};
+    const auto saved = engine.save_slot(0, path, first.session_digest);
+    if (saved.tokens == 0 || saved.session_digest != first.session_digest) {
+        std::cerr << "generation checkpoint snapshot saved the wrong session\n";
+        return 1;
+    }
+
+    // Force a mismatch in the latest assistant response (also covers noncanonical
+    // generated token IDs being re-encoded by a client) after its unchanged header.
+    const auto rewritten_latest = chat({user, early, tool,
+        message("assistant", "The previous response was rewritten."),
+        message("tool", "Continue using the same colors.")});
+    const auto latest = engine.generate(engine.prepare(rewritten_latest), options(true));
+    if (latest.prefix_reuse_path != ninfer::PrefixReusePath::RestoreTurnCheckpoint ||
+        latest.reused_prompt_tokens != generation_frontier) {
+        std::cerr << "latest response rewrite did not restore the generation checkpoint\n";
+        return 1;
+    }
+    const auto latest_cold = engine.generate(engine.prepare(rewritten_latest), options(false));
+    if (latest.generated_token_ids != latest_cold.generated_token_ids) {
+        std::cerr << "generation checkpoint restore changed greedy output\n";
+        return 1;
+    }
+
+    const auto restored = engine.restore_slot(0, path);
+    if (restored.tokens != saved.tokens || restored.session_digest != saved.session_digest) {
+        std::cerr << "generation checkpoint snapshot restored the wrong session\n";
+        return 1;
+    }
+    const auto restored_states = engine.slot_states();
+    if (restored_states[0].checkpoints.size() != 2) {
+        std::cerr << "ring-disabled snapshot lost an independent checkpoint\n";
+        return 1;
+    }
+    const auto rewritten_early = chat({user,
+        message("assistant", "I will inspect a different first result."), tool});
+    const auto anchored = engine.generate(engine.prepare(rewritten_early), options(true));
+    if (anchored.prefix_reuse_path != ninfer::PrefixReusePath::RestoreTurnCheckpoint ||
+        anchored.reused_prompt_tokens != user_frontier) {
+        std::cerr << "early response rewrite did not restore the persisted user anchor\n";
+        return 1;
+    }
+    const auto anchored_cold = engine.generate(engine.prepare(rewritten_early), options(false));
+    if (anchored.generated_token_ids != anchored_cold.generated_token_ids) {
+        std::cerr << "user anchor restore changed greedy output\n";
+        return 1;
+    }
+    return 0;
+}
+
 // End-to-end auto-save-on-eviction: a session bound to a slot file (by an explicit save) is
 // spilled back to that file when a fresh session's FullReset admission destroys it, so the
 // file ends up holding the session's latest frontier, not the explicitly saved one.
@@ -558,6 +656,9 @@ int exercise_artifact(const char* artifact) {
     }
     // Own Engine (and scope) per exercise: both features are startup options.
     if (const int result = exercise_turn_checkpoint_ring(artifact); result != 0) {
+        return result;
+    }
+    if (const int result = exercise_generation_checkpoints(artifact); result != 0) {
         return result;
     }
     return exercise_auto_save_evicted(artifact);

@@ -892,12 +892,14 @@ PreparedPrompt Frontend::prepare(PromptInput input) const {
         result.prepare.attention_pairs        = processed.stats.attention_pairs;
         result.prepare.patch_bytes            = processed.stats.patch_bytes;
         result.identity.turn_rewrite_boundary = processed.turn_rewrite_boundary;
+        result.identity.generation_boundary = processed.generation_boundary;
     } else {
         const fi::RenderedChat rendered =
             impl_->chat_template.render(messages, render_options(options));
         fi::EncodedChat encoded = fi::encode_rendered_chat(*impl_->tokenizer, rendered);
         result.token_ids        = std::move(encoded.input_ids);
         result.identity.turn_rewrite_boundary = encoded.turn_rewrite_boundary;
+        result.identity.generation_boundary = encoded.generation_boundary;
         assign_text_positions(result);
     }
     (void)checked_token_count(result.token_ids.size());

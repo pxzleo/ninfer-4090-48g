@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -16,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-// Retained-session snapshot format (target-private, version 1).
+// Retained-session snapshot format (target-private, version 3).
 //
 // A snapshot is the complete host image of one idle retained lane: the resident prefix
 // (ledger + identity), the paged Text/backend KV payload in logical page order, the lane's
@@ -30,11 +31,8 @@
 namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS {
 namespace {
 
-constexpr char kSessionSnapshotMagic[8] = {'N', 'I', 'N', 'F', 'S', 'E', 'S', '1'};
-constexpr std::uint32_t kSessionSnapshotVersion = 1;
-// Version 2 appends the host turn-checkpoint ring after the KV payload. A snapshot with an
-// empty ring is still written as version 1 so binaries without ring support keep reading it.
-constexpr std::uint32_t kSessionSnapshotVersionRing = 2;
+constexpr char kSessionSnapshotMagic[8] = {'N', 'I', 'N', 'F', 'S', 'E', 'S', '3'};
+constexpr std::uint32_t kSessionSnapshotVersion = 3;
 constexpr std::uint32_t kSessionSnapshotMaxRingEntries = 64;
 
 constexpr std::uint32_t kKvFlagPackedV    = 1U << 0;
@@ -296,16 +294,29 @@ ProgramImplCore::retained_lane_checkpoints(std::uint32_t lane) const {
     if (lane >= max_concurrency || !sequences[lane].retained) { return {}; }
     const SequenceState& sequence = sequences[lane];
     std::vector<SlotCheckpoint> out;
-    out.reserve(sequence.checkpoint_ring.size() + 1);
+    out.reserve(sequence.checkpoint_ring.size() + 3);
     for (const HostTurnCheckpoint& entry : sequence.checkpoint_ring) {
         out.push_back(SlotCheckpoint{entry.frontier, entry.session_digest});
     }
-    // The staged (newest) checkpoint has not been folded into the ring yet; report it so the
-    // listing matches what a diverging prompt could actually restore.
+    if (sequence.user_turn_checkpoint) {
+        const auto& entry = *sequence.user_turn_checkpoint;
+        out.push_back(SlotCheckpoint{entry.frontier, entry.session_digest});
+    }
+    if (sequence.turn_checkpoint.valid) {
+        const auto frontier = sequence.turn_checkpoint.frontier;
+        out.push_back(SlotCheckpoint{frontier, ledger_prefix_digest(
+            std::span<const TokenId>(sequence.ledger.data(), frontier))});
+    }
     const CheckpointStaging& staging = checkpoint_staging[lane];
-    if (staging.pending && (out.empty() || out.back().frontier != staging.frontier)) {
+    if (staging.pending) {
         out.push_back(SlotCheckpoint{staging.frontier, staging.session_digest});
     }
+    std::sort(out.begin(), out.end(), [](const auto& left, const auto& right) {
+        return left.frontier < right.frontier;
+    });
+    out.erase(std::unique(out.begin(), out.end(), [](const auto& left, const auto& right) {
+        return left.frontier == right.frontier;
+    }), out.end());
     return out;
 }
 
@@ -337,7 +348,7 @@ ProgramImplCore::save_retained_lane(std::uint32_t lane, std::string_view model_b
 
     // Fold any staged checkpoint into the ring first so the snapshot carries every restorable
     // frontier the lane holds.
-    if (checkpoint_ring_capacity != 0) { drain_checkpoint_staging(sequence); }
+    drain_checkpoint_staging(sequence);
     if (backend_kv_cache() != nullptr &&
         (!sequence.kv->backend || sequence.kv->backend->page_ids().empty())) {
         throw std::invalid_argument("retained session is too shallow to snapshot");
@@ -391,7 +402,7 @@ ProgramImplCore::save_retained_lane(std::uint32_t lane, std::string_view model_b
     session.text_pages               = static_cast<std::uint32_t>(text_pages.size());
     session.backend_pages            = static_cast<std::uint32_t>(backend_pages.size());
 
-    // A snapshot without ring entries stays version 1 so pre-ring binaries keep reading it.
+    // The current format always records the independent user anchor and optional ring.
     const std::size_t ring_skip =
         sequence.checkpoint_ring.size() > kSessionSnapshotMaxRingEntries
             ? sequence.checkpoint_ring.size() - kSessionSnapshotMaxRingEntries
@@ -411,7 +422,7 @@ ProgramImplCore::save_retained_lane(std::uint32_t lane, std::string_view model_b
     snapshot.session_digest = ledger_digest(sequence.ledger);
     SnapshotWriter writer(snapshot.bytes);
     writer.bytes(kSessionSnapshotMagic, sizeof(kSessionSnapshotMagic));
-    writer.pod(ring_entries.empty() ? kSessionSnapshotVersion : kSessionSnapshotVersionRing);
+    writer.pod(kSessionSnapshotVersion);
     writer.pod<std::uint32_t>(static_cast<std::uint32_t>(model_binding.size()));
     writer.bytes(model_binding.data(), model_binding.size());
     write_config(writer, config);
@@ -452,15 +463,22 @@ ProgramImplCore::save_retained_lane(std::uint32_t lane, std::string_view model_b
     // Ring entries are host data, so they are written inline during the sizing pass; they land
     // after the KV payload regions in the byte stream. Nothing may grow the vector once the
     // payload base pointer below is taken.
-    if (!ring_entries.empty()) {
-        writer.pod<std::uint32_t>(static_cast<std::uint32_t>(ring_entries.size()));
-        for (const HostTurnCheckpoint& entry : ring_entries) {
-            writer.pod<std::uint32_t>(entry.frontier);
-            writer.bytes(entry.hidden.data(), entry.hidden.size());
-            writer.bytes(entry.conv.data(), entry.conv.size());
-            writer.bytes(entry.recurrent.data(), entry.recurrent.size());
+    const auto write_checkpoint = [&](const HostTurnCheckpoint& entry) {
+        if (entry.frontier == 0 || entry.frontier > sequence.ledger.size() ||
+            entry.hidden.size() != config.tail_hidden_bytes ||
+            entry.conv.size() != conv_bytes * config.gdn_layers ||
+            entry.recurrent.size() != recurrent_bytes * config.gdn_layers) {
+            throw std::logic_error("host checkpoint geometry is inconsistent");
         }
-    }
+        writer.pod<std::uint32_t>(entry.frontier);
+        writer.bytes(entry.hidden.data(), entry.hidden.size());
+        writer.bytes(entry.conv.data(), entry.conv.size());
+        writer.bytes(entry.recurrent.data(), entry.recurrent.size());
+    };
+    writer.pod<std::uint32_t>(static_cast<std::uint32_t>(ring_entries.size()));
+    for (const HostTurnCheckpoint& entry : ring_entries) { write_checkpoint(entry); }
+    writer.pod<std::uint32_t>(sequence.user_turn_checkpoint ? 1 : 0);
+    if (sequence.user_turn_checkpoint) { write_checkpoint(*sequence.user_turn_checkpoint); }
 
     std::uint8_t* base = snapshot.bytes.data();
     const auto copy_gdn_slot = [&](std::int32_t slot, const GdnRegion& region) {
@@ -518,7 +536,7 @@ std::uint32_t ProgramImplCore::restore_retained_lane(std::uint32_t lane,
         throw std::invalid_argument("file is not a session snapshot");
     }
     const std::uint32_t version = reader.pod<std::uint32_t>();
-    if (version != kSessionSnapshotVersion && version != kSessionSnapshotVersionRing) {
+    if (version != kSessionSnapshotVersion) {
         throw std::invalid_argument("session snapshot version is unsupported");
     }
     const std::uint32_t binding_bytes = reader.pod<std::uint32_t>();
@@ -640,36 +658,43 @@ std::uint32_t ProgramImplCore::restore_retained_lane(std::uint32_t lane,
             ? reader.payload(config.backend_page_bytes * session.backend_pages)
             : nullptr;
 
+    const auto read_checkpoint = [&]() {
+        HostTurnCheckpoint entry;
+        entry.frontier = reader.pod<std::uint32_t>();
+        if (entry.frontier == 0 || entry.frontier > session.tokens) {
+            throw std::invalid_argument("session snapshot host checkpoint frontier is invalid");
+        }
+        const std::uint8_t* hidden = reader.payload(config.tail_hidden_bytes);
+        const std::uint8_t* conv = reader.payload(conv_bytes * config.gdn_layers);
+        const std::uint8_t* recurrent = reader.payload(recurrent_bytes * config.gdn_layers);
+        entry.hidden.assign(hidden, hidden + config.tail_hidden_bytes);
+        entry.conv.assign(conv, conv + conv_bytes * config.gdn_layers);
+        entry.recurrent.assign(recurrent, recurrent + recurrent_bytes * config.gdn_layers);
+        entry.session_digest = ledger_prefix_digest(
+            std::span<const TokenId>(ledger.data(), entry.frontier));
+        return entry;
+    };
     std::vector<HostTurnCheckpoint> checkpoint_ring;
-    if (version == kSessionSnapshotVersionRing) {
-        const std::uint32_t ring_count = reader.pod<std::uint32_t>();
-        if (ring_count == 0 || ring_count > kSessionSnapshotMaxRingEntries) {
-            throw std::invalid_argument("session snapshot checkpoint ring count is out of range");
-        }
-        checkpoint_ring.reserve(ring_count);
-        std::uint32_t previous_frontier = 0;
-        for (std::uint32_t index = 0; index < ring_count; ++index) {
-            HostTurnCheckpoint entry;
-            entry.frontier = reader.pod<std::uint32_t>();
-            if (entry.frontier == 0 || entry.frontier <= previous_frontier ||
-                entry.frontier > session.tokens) {
-                throw std::invalid_argument(
-                    "session snapshot checkpoint frontiers are inconsistent");
-            }
-            previous_frontier          = entry.frontier;
-            const std::uint8_t* hidden = reader.payload(config.tail_hidden_bytes);
-            const std::uint8_t* ring_conv = reader.payload(conv_bytes * config.gdn_layers);
-            const std::uint8_t* ring_recurrent =
-                reader.payload(recurrent_bytes * config.gdn_layers);
-            entry.hidden.assign(hidden, hidden + config.tail_hidden_bytes);
-            entry.conv.assign(ring_conv, ring_conv + conv_bytes * config.gdn_layers);
-            entry.recurrent.assign(ring_recurrent,
-                                   ring_recurrent + recurrent_bytes * config.gdn_layers);
-            entry.session_digest = ledger_prefix_digest(
-                std::span<const TokenId>(ledger.data(), entry.frontier));
-            checkpoint_ring.push_back(std::move(entry));
-        }
+    const std::uint32_t ring_count = reader.pod<std::uint32_t>();
+    if (ring_count > kSessionSnapshotMaxRingEntries) {
+        throw std::invalid_argument("session snapshot checkpoint ring count is out of range");
     }
+    checkpoint_ring.reserve(ring_count);
+    std::uint32_t previous_frontier = 0;
+    for (std::uint32_t index = 0; index < ring_count; ++index) {
+        HostTurnCheckpoint entry = read_checkpoint();
+        if (entry.frontier <= previous_frontier) {
+            throw std::invalid_argument("session snapshot checkpoint frontiers are inconsistent");
+        }
+        previous_frontier = entry.frontier;
+        checkpoint_ring.push_back(std::move(entry));
+    }
+    std::optional<HostTurnCheckpoint> user_turn_checkpoint;
+    const std::uint32_t has_user_checkpoint = reader.pod<std::uint32_t>();
+    if (has_user_checkpoint > 1) {
+        throw std::invalid_argument("session snapshot user checkpoint flag is invalid");
+    }
+    if (has_user_checkpoint != 0) { user_turn_checkpoint = read_checkpoint(); }
     if (reader.remaining() != 0) {
         throw std::invalid_argument("session snapshot has trailing bytes");
     }
@@ -743,6 +768,7 @@ std::uint32_t ProgramImplCore::restore_retained_lane(std::uint32_t lane,
                      .frontier = session.turn_checkpoint_frontier,
         };
         sequence.checkpoint_ring = std::move(checkpoint_ring);
+        sequence.user_turn_checkpoint = std::move(user_turn_checkpoint);
         discard_checkpoint_staging(sequence);
         sequence.kv->text.cancel_unmapped_entitlement();
         if (sequence.kv->backend) { sequence.kv->backend->cancel_unmapped_entitlement(); }

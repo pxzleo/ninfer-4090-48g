@@ -294,10 +294,7 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
         sequence.prefix_identity.reserve(static_cast<std::size_t>(capacity) + 1ULL);
     }
 
-    if (checkpoint_ring_capacity != 0) {
-        if (speculative_backend == SpeculativeBackend::DFlash) {
-            throw std::logic_error("turn checkpoint ring does not support the DFlash backend");
-        }
+    if (speculative_backend != SpeculativeBackend::DFlash) {
         checkpoint_staging_store.emplace(checkpoint_entry_bytes() * max_concurrency);
         for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
             CUDA_CHECK(cudaEventCreateWithFlags(&checkpoint_staging_events[lane],
@@ -480,13 +477,16 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
          sequence.turn_checkpoint.frontier != request_plan.reuse_base)) {
         // The planned checkpoint is not the resident one, so it must live in the host ring.
         // Landing it in the device checkpoint slot lets the restore below run unchanged.
-        if (!upload_ring_checkpoint(sequence, request_plan.reuse_base)) {
+        if (!upload_host_checkpoint(sequence, request_plan.reuse_base)) {
             throw std::logic_error("planned turn checkpoint is unavailable");
         }
     }
     if (request_plan.turn_checkpoint_action == TurnCheckpointAction::KeepExisting &&
-        (!prompt.identity.turn_rewrite_boundary || !sequence.turn_checkpoint.valid ||
-         sequence.turn_checkpoint.frontier != *prompt.identity.turn_rewrite_boundary)) {
+        (!sequence.turn_checkpoint.valid ||
+         sequence.turn_checkpoint.frontier !=
+             (speculative_backend == SpeculativeBackend::DFlash || !prompt.identity.generation_boundary
+                  ? prompt.identity.turn_rewrite_boundary.value_or(0)
+                  : *prompt.identity.generation_boundary))) {
         throw std::logic_error("planned turn checkpoint retention is unavailable");
     }
     if (request_plan.turn_checkpoint_action == TurnCheckpointAction::CaptureNew &&
@@ -509,12 +509,13 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
     request.lifecycle = Lifecycle::Empty;
     sequence.retained = false;
     try {
-        if (checkpoint_ring_capacity != 0) {
+        if (speculative_backend != SpeculativeBackend::DFlash) {
             // Settle the staged checkpoint and the ring against this request's divergence
             // point: entries above the reuse base describe a history this prompt rewrites.
             if (request_plan.reuse == ReusePath::FullReset) {
                 discard_checkpoint_staging(sequence);
                 sequence.checkpoint_ring.clear();
+                sequence.user_turn_checkpoint.reset();
             } else {
                 if (checkpoint_staging[lane].pending &&
                     checkpoint_staging[lane].frontier <= base) {
@@ -629,6 +630,7 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
             .vision                           = nullptr,
             .transient                        = transient,
             .turn_checkpoint_capture_frontier = request_plan.turn_checkpoint_capture_frontier,
+            .user_checkpoint_capture_frontier = request_plan.user_checkpoint_capture_frontier,
             .base                             = base,
             .cursor                           = base,
             .prompt_tokens                    = prompt_tokens,
@@ -908,6 +910,7 @@ void ProgramImplCore::clear_lane(SequenceState& sequence, RequestControl& reques
     sequence.retained                = false;
     sequence.turn_checkpoint         = {};
     sequence.checkpoint_ring.clear();
+    sequence.user_turn_checkpoint.reset();
     discard_checkpoint_staging(sequence);
     request.pending                  = {};
 }
@@ -939,11 +942,20 @@ std::uint8_t* ProgramImplCore::checkpoint_staging_base(std::uint32_t lane) const
 // slot + boundary hidden) into the lane's pinned staging entry. Runs right after prefill
 // completes, when the stream is synchronized, so the copy overlaps the decode that follows;
 // the recorded event gates the later drain into the pageable ring.
-void ProgramImplCore::stage_turn_checkpoint(SequenceState& sequence) {
-    if (checkpoint_ring_capacity == 0 || !sequence.turn_checkpoint.valid) { return; }
+void ProgramImplCore::stage_turn_checkpoint(SequenceState& sequence, bool user_anchor) {
+    if ((!user_anchor && checkpoint_ring_capacity == 0) || !sequence.turn_checkpoint.valid) { return; }
+    // The user copy already owns this state and will enter the history ring when
+    // a later user anchor replaces it; avoid a second device-to-host transfer.
+    if (!user_anchor && sequence.user_turn_checkpoint &&
+        sequence.user_turn_checkpoint->frontier == sequence.turn_checkpoint.frontier) {
+        return;
+    }
     const std::uint32_t lane     = sequence.lane;
     CheckpointStaging& staging   = checkpoint_staging[lane];
-    staging.pending              = false;
+    if (staging.pending) {
+        throw std::logic_error("checkpoint staging was not drained before reuse");
+    }
+    staging.user_anchor = user_anchor;
     const std::uint32_t frontier = sequence.turn_checkpoint.frontier;
     if (frontier == 0 || frontier > sequence.ledger.size()) { return; }
 
@@ -989,7 +1001,15 @@ void ProgramImplCore::drain_checkpoint_staging(SequenceState& sequence) {
     entry.conv.assign(base, base + checkpoint_conv_bytes());
     base += checkpoint_conv_bytes();
     entry.recurrent.assign(base, base + checkpoint_recurrent_bytes());
-    append_ring_checkpoint(sequence, std::move(entry));
+    if (staging.user_anchor) {
+        if (checkpoint_ring_capacity != 0 && sequence.user_turn_checkpoint &&
+            sequence.user_turn_checkpoint->frontier != entry.frontier) {
+            append_ring_checkpoint(sequence, std::move(*sequence.user_turn_checkpoint));
+        }
+        sequence.user_turn_checkpoint = std::move(entry);
+    } else {
+        append_ring_checkpoint(sequence, std::move(entry));
+    }
 }
 
 void ProgramImplCore::discard_checkpoint_staging(SequenceState& sequence) noexcept {
@@ -1000,6 +1020,9 @@ void ProgramImplCore::invalidate_checkpoint_ring(SequenceState& sequence,
                                                  std::uint32_t keep_through) noexcept {
     std::vector<HostTurnCheckpoint>& ring = sequence.checkpoint_ring;
     while (!ring.empty() && ring.back().frontier > keep_through) { ring.pop_back(); }
+    if (sequence.user_turn_checkpoint && sequence.user_turn_checkpoint->frontier > keep_through) {
+        sequence.user_turn_checkpoint.reset();
+    }
 }
 
 // Ring maintenance mirrors llama.cpp's context checkpoints: replace a same-frontier entry,
@@ -1010,26 +1033,36 @@ void ProgramImplCore::append_ring_checkpoint(SequenceState& sequence, HostTurnCh
     std::erase_if(ring, [&](const HostTurnCheckpoint& held) {
         return held.frontier == entry.frontier;
     });
+    ring.push_back(std::move(entry));
+    std::sort(ring.begin(), ring.end(), [](const auto& left, const auto& right) {
+        return left.frontier < right.frontier;
+    });
+    const std::uint32_t newest = ring.back().frontier;
     std::uint32_t previous_kept = 0;
     std::erase_if(ring, [&](const HostTurnCheckpoint& held) {
-        if (previous_kept != 0 && held.frontier <= previous_kept + kTurnCheckpointMinStep) {
+        if (held.frontier != newest && previous_kept != 0 &&
+            held.frontier <= previous_kept + kTurnCheckpointMinStep) {
             return true;
         }
         previous_kept = held.frontier;
         return false;
     });
-    while (ring.size() + 1 > checkpoint_ring_capacity) { ring.erase(ring.begin()); }
-    ring.push_back(std::move(entry));
+    while (ring.size() > checkpoint_ring_capacity) { ring.erase(ring.begin()); }
 }
 
 // Lands a host ring entry back in the lane's device checkpoint slot so the ordinary
 // RestoreTurnCheckpoint path can proceed as if the checkpoint had stayed resident.
-bool ProgramImplCore::upload_ring_checkpoint(SequenceState& sequence, std::uint32_t frontier) {
-    if (checkpoint_ring_capacity == 0) { return false; }
-    const auto entry = std::find_if(
-        sequence.checkpoint_ring.begin(), sequence.checkpoint_ring.end(),
-        [&](const HostTurnCheckpoint& held) { return held.frontier == frontier; });
-    if (entry == sequence.checkpoint_ring.end() || entry->frontier == 0 ||
+bool ProgramImplCore::upload_host_checkpoint(SequenceState& sequence, std::uint32_t frontier) {
+    const HostTurnCheckpoint* entry = nullptr;
+    if (sequence.user_turn_checkpoint && sequence.user_turn_checkpoint->frontier == frontier) {
+        entry = &*sequence.user_turn_checkpoint;
+    } else {
+        const auto held = std::find_if(
+            sequence.checkpoint_ring.begin(), sequence.checkpoint_ring.end(),
+            [&](const HostTurnCheckpoint& checkpoint) { return checkpoint.frontier == frontier; });
+        if (held != sequence.checkpoint_ring.end()) { entry = &*held; }
+    }
+    if (entry == nullptr || entry->frontier == 0 ||
         entry->hidden.size() != checkpoint_hidden_bytes() ||
         entry->conv.size() != checkpoint_conv_bytes() ||
         entry->recurrent.size() != checkpoint_recurrent_bytes()) {
@@ -1754,16 +1787,18 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
             if (speculative_backend == SpeculativeBackend::DFlash) {
                 mark_workspace_usage(workspace_plan.dflash_context);
             }
+            const auto capture_frontier = staged.user_checkpoint_capture_frontier
+                ? staged.user_checkpoint_capture_frontier : staged.turn_checkpoint_capture_frontier;
             schedule::PrefillChunkResult result;
             if (staged.vision) {
                 mark_workspace_usage(workspace_plan.vision_encode);
                 result = schedule::prefill_multimodal_chunk(
                     schedule_state, staged.prompt, *staged.vision, nominal,
-                    staged.turn_checkpoint_capture_frontier, final_candidate);
+                    capture_frontier, final_candidate);
             } else {
                 result = schedule::prefill_text_chunk(
                     schedule_state, std::span<const TokenId>(staged.prompt.token_ids), nominal,
-                    staged.turn_checkpoint_capture_frontier, final_candidate);
+                    capture_frontier, final_candidate);
             }
             if (result.processed_tokens == 0 || result.processed_tokens > nominal) {
                 throw std::logic_error("ordinary prefill chunk made invalid progress");
@@ -1777,6 +1812,14 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
             if (staged.prepare_mtp) { sequence.mtp_kv_valid = staged.cursor; }
             if (speculative_backend == SpeculativeBackend::DFlash) {
                 sequence.dflash_context_frontier = staged.cursor;
+            }
+
+            if (staged.user_checkpoint_capture_frontier &&
+                staged.cursor == *staged.user_checkpoint_capture_frontier) {
+                sequence.turn_checkpoint = TurnCheckpoint{.valid = true, .frontier = staged.cursor};
+                stage_turn_checkpoint(sequence, true);
+                drain_checkpoint_staging(sequence);
+                staged.user_checkpoint_capture_frontier.reset();
             }
 
             if (!result.finalized) {
