@@ -84,10 +84,12 @@ metadata 和一份 shared executor workspace；否则该 `max_concurrency` 无�
 NInfer 不支持 preemption，因此 request 只有在其 prompt、声明的最大生成长度和必要的临时增长都能
 获得完整资源承诺后才可 admission。已经 admitted 的 request 不会因为后来请求到达而被截断或逐出。
 
-### 2.5 One prefill owner
+### 2.5 Bounded per-request prefill
 
-同一时刻最多有一个 admitted request 拥有 prefill/finalization path。Suffix prefill 以 bounded chunk 为
-单位，在 decode rounds 之间运行。其他等待请求仍留在 host queue，不占 slot 或 model state。
+多个 admitted requests 可以各自持有 prefill/finalization 进度，数量受启动时 active lane 上限限制。
+Suffix prefill 以 bounded chunk 为单位轮转，在 decode rounds 之间运行；GPU 同一时刻仍只执行一个
+request 的 chunk。每个 admitted request 保留自己的 sequence state、prompt cursor 和 request-transient
+region，不抢占或释放它的生命周期资源。尚不能取得完整资源的请求留在 host queue。
 
 ### 2.6 Single GPU execution owner
 
@@ -357,8 +359,8 @@ frame 和权重是 engine-fixed resources；owning result capacity 已在 ingres
 1. 存在可用 control lane；
 2. request 对固定 model、frontend 和 selected execution backend 合法；
 3. active-priority retained eviction 后，每个 entitlement dimension 都能承诺 request 的完整生命周期需求；
-4. 当前没有其他 prefill owner；admission 会立即建立该 request 的 suffix-prefill 或 exact-hit finalization
-   ownership。
+4. 固定 request-transient arena 中存在满足 plan 大小/对齐且不与其他请求重叠的区域（零字节请求不占区域）；
+   admission 建立该 request 自己的 suffix-prefill 或 exact-hit finalization 进度并执行 first unit。
 
 Selected backend 的差异只体现在 target 给出的 typed entitlement；Scheduler 不为 ordinary、MTP 或 DFlash
 建立不同 queue policy。即使 startup sizing 保证 backend 不会早于 Main pool 成为正常 backpressure，
@@ -388,10 +390,10 @@ oldest head is exclusively feasible but blocked by active lane/entitlement
     -> protect this head and consider qualified backfill
 ```
 
-若 head 的完整 lane/entitlement 已经可行、只因现有 one-prefill-owner 不能 admission，它保持 ordinary
-head waiting，不建立 protection epoch，也不扫描 later candidates；prefill owner 清除后的下一个合法
-admission turn 先重试该 head。Protection 只在没有 prefill owner、head 确实需要现有 active request 释放
-lane 或 entitlement 时建立，因此 frozen donor set 非空。
+若 head 的 lane/KV entitlement 已经可行，只因 request-transient arena 没有可用连续区域而无法 admission，
+它保持 ordinary head waiting，不建立 KV protection epoch，也不扫描 later candidates。已有 prefill 完成、
+取消或失败释放 region 后，在下一个合法 admission turn 优先重试。空 arena 仍无法容纳的 plan 直接报错，
+不会无限等待。Protection 在 head 确实需要 active request 释放 lane 或 KV entitlement 时建立。
 
 同一时刻只保护一个最老 head。Protection 绑定稳定的 request generation identity，不绑定可回收的 lane、
 slot index 或 compact batch row。它只是一份 Scheduler shadow state，不为 waiting request 预占真实 pages、
@@ -405,7 +407,7 @@ UNPROTECTED
     ▼
 PROTECTED_OPEN
     │ protected resource opportunity has matured,
-    │ but head is still blocked by a temporal borrower/prefill owner
+    │ but head is still blocked by a temporal borrower/transient region
     ▼
 PROTECTED_DRAIN
 ```
@@ -519,13 +521,14 @@ qualification 会自然保守，仍可使用可证明的 persistent-safe backfil
 只有满足以下条件的 boundary 才是 admission turn：
 
 ```text
-no prefill owner
-and (no decode-ready request or the completed GPU unit was a DecodeRound)
+(no decode-ready request or the completed GPU unit was a DecodeRound)
+and (no admitted prefill or the previous prefill opportunity advanced an existing request)
 ```
 
 其他 boundary 可以处理 completion、cancellation、timeout 和 protection bookkeeping，但不能 commit head
 或 backfill admission。这个 gate 保证已有 decode-ready donors 在两次 admission 之间至少完成一次 progress
-round；final prefill/finalization 结束后不能立即连续 admission 另一个 request。
+round。存在 admitted prefill 时，admission 的 first chunk 和现有请求的轮转 chunk 交替使用 prefill
+opportunities，持续 ingress 不能饿死已入场请求。没有其他 prefill 时，可继续接纳请求。
 
 一次 admission turn 最多成功 admission 一个 request。Cancellation、timeout 和 permanent-invalid entry 的
 清理不算 admission；Scheduler 可以在同一 frozen pending snapshot 中继续寻找新的 head/candidate，但同一
@@ -544,10 +547,10 @@ round；final prefill/finalization 结束后不能立即连续 admission 另一�
 ```
 
 若 exact current accounting 已让 protected head 可行，它总是先于 later request admission。若 frozen donors
-已经释放，或当前非-temporal shadow resources 已足以容纳 `H`，但 `H` 仍被 temporal borrower 或现有
-prefill owner 阻塞，protection 立即进入 `PROTECTED_DRAIN`。Drain 不抢占 borrower；它禁止 later/backfill
-admission，但 protected head 仍在每个合法 turn 优先重试。Persistent-safe borrower 尚在 prefill 时也可能
-短暂阻止 head admission，但 one-prefill-owner work 有限且此期间不能再接纳其他请求。
+已经释放，或当前非-temporal shadow resources 已足以容纳 `H`，但 `H` 仍被 temporal borrower 阻塞，
+protection 立即进入 `PROTECTED_DRAIN`。Drain 不抢占 borrower；它禁止 later/backfill admission，
+protected head 仍在每个合法 turn 优先重试。Request-transient 等待使用前述 ordinary waiting 规则；
+已入场 prefill 和 decode 持续推进。
 
 Frontier member completion/cancellation 只在其 state 于 boundary 真正释放后计为 release。该 boundary 若是
 admission turn 就立即 head-first retry；否则更新 maturity，并在下一合法 turn 先重试。Active request 的
@@ -575,7 +578,7 @@ Admission 结果分为：
 | request 非法或超过 semantic limit | 永久拒绝 |
 | active-priority eviction 后独占也无法容纳 | 对当前 Engine configuration 拒绝 |
 | request lifetime capacity 已满 | ingress 以 overload 拒绝 |
-| 独占可容纳，但当前 slot/resource/prefill owner 不允许 admission | protected waiting 或 ordinary waiting |
+| 独占可容纳，但当前 slot/resource/transient region 不允许 admission | protected waiting 或 ordinary waiting |
 | qualified later request 使用当前可用 backfill opportunity | 先于 blocked head admission |
 | admission 前 queue timeout 到期 | 以 queue-timeout 结束 |
 | Engine 正在停止或不可用 | 以 unavailable 拒绝 |
@@ -718,11 +721,19 @@ limit 和 output state 始终由新 request 创建。
 Retained state 占用实际 state-pool memory，但不占 active control slot，也不保留 future growth
 reservation。Active admission 优先；cache occupancy 阻塞原本可行的 request 前，先驱逐 free lanes 上的
 retained entries。Planner 不复制或迁移 retained physical state，而是在 free lanes 中选择最大合法 reuse。
-所有可直接入场与驱逐其他空闲缓存后可入场的 lane 必须一起比较，先选择 reusable prompt tokens 最多的
-候选；不能因为另一个零复用 lane 可以直接入场而跳过原 lane 的 continuation。复用量相同时，优先不需
-额外驱逐的候选，再选择自身 retained depth 最小的 lane，同值按 lane index 排序。
-需要释放其他 retained entries 时，按 retained depth 从小到大驱逐空闲 lane，容量足够立即停止；正在
-prefill/decode 的 lane 和本次选中的 continuation lane 均不得作为驱逐对象。
+所有可直接入场与释放其他空闲缓存后可入场的 lane 必须一起比较：先最大化当前 request 的合法 reuse，
+再最小化其他 prepared queued requests 的复用损失，再最小化目标槽覆盖与 victims 驱逐的总缓存损失，
+同值依次比较 victim 数量和 lane index。不能因为冷槽能直接入场而覆盖更有价值的缓存。
+
+每个 idle retained lane 的 queued claim 是其他有效 prepared requests 在该 lane 的最大合法 reusable
+frontier，不按 session 名称猜测。Target replacement 的损失取 retained/queued frontier 超过当前 reuse
+frontier 的部分；完整 victim eviction 计入该 lane 全部 retained/queued frontier。Pending requests 被取消、
+过期或判为 invalid 后不参与 claim。Claim 不给予队列优先级或真实 ownership，所有可用缓存均被 claim 时
+仍可释放损失较少的缓存，让可行的 FIFO head 前进。
+
+Victims 优先取没有 queued claim 的空闲缓存，再按 queued reuse 和 retained depth 从小到大选择。
+正在 prefill/decode 的 lane 和选中的 continuation lane 禁止作为 victim。每个候选在只读 target probe 中
+逐个加入 victims，首次完整容量可行即停止；选择后只释放这组已资格检查的 victims，不运行第二套策略。
 只有在 slot/lane 和完整 entitlement 都已满足后才能 claim cache ownership。
 
 Prefix lookup 只改变 uncached prompt work 和 prospective reuse plan，不自行授予 queue priority。它可以保守地
@@ -745,8 +756,10 @@ DecodeRound(all decode-ready requests)
 完整 request 不是 scheduling unit。所有 GPU work 在一条 execution lane 上串行执行。
 
 Model Runtime 拥有一份地址稳定的 shared workspace，由串行的 GPU units 复用，不按 request
-复制。Prefill owner 可在 Vision/Text phases 及多个 chunks 之间持有一份 request-transient lease；
-final prefill、cancellation 或 failure 后释放。
+复制。每个 prefill request 可在 Vision/Text phases 及多个 chunks 之间持有自己的一份 request-transient
+lease。所有 leases 由同一 startup-frozen arena 按 lane first-fit 分配，地址不迁移、彼此不重叠；没有
+request-time device allocation。Final prefill、cancellation 或 failure 仅释放该请求的 region。Used/peak
+统计所有 regions 的 payload 和前置对齐 padding。
 
 ### 7.2 Boundary processing
 
@@ -772,30 +785,24 @@ boundary 最多发布一个新 admitted request。
 调度策略为：
 
 ```text
-if the completed unit was a DecodeRound and a prefill owner exists:
-    run one latency-bounded PrefillChunk
-else if one or more requests are DECODE_READY:
+at a prefill opportunity (no decode-ready rows, or after a DecodeRound):
+    if admission turn and a queued request is feasible:
+        admit at most one and run its first prefill/finalization unit
+    else if admitted prefill exists:
+        run one chunk of the next prefill lane in round-robin order
+otherwise, if decode-ready requests exist:
     run one DecodeRound containing all of them
-else if a prefill owner exists:
-    run the next PrefillChunk
-else:
-    remain idle
 ```
 
-因此 decode 和 prefill 同时持续 runnable 时：
+存在 decode-ready rows 时，GPU units 仍按 DecodeRound / PrefillChunk 交替；没有 decode-ready rows 时，
+prefill chunks 连续执行。多个 prefill requests 以 lane cursor 轮转，每条请求只在自己的 chunk 更新进度。
+Admission first unit 和既有 prefill progress 交替消耗 prefill opportunities。新请求 finalization 完成后
+在下一个 boundary 加入 compact decode batch；其到达无需等待另一条请求整段预填充结束。
 
-```text
-DecodeRound -> PrefillChunk -> DecodeRound -> PrefillChunk -> ...
-```
-
-没有 decode-ready request 时，prefill chunks 连续执行；没有 prefill owner 时，decode rounds 连续执行。
-
-当没有 prefill owner 而 ordered pending queue 非空时，§5 选中的 head 或 backfill request 占用下一次
-prefill/finalization opportunity：GPU idle 时可以立即 admission；已有 decode-ready rows 时，先完成一个
-DecodeRound，再 admission selected request 并执行它的 first prefill/finalization unit。若该 unit 未完成，
-它成为唯一 prefill owner并进入上述交替；若它完成，request 在下一 boundary 加入 decode batch。持续
-ingress 因此不能在两个 donor progress rounds 之间连续 admission 多个 requests，也不能无限延迟 frozen
-frontier 的 decode progress。
+每个 prefill unit 开始时，target 按当前 sequence 重新设置共享 device ingress：Text/backend KV table row、
+RoPE delta，以及 DFlash host/device lane selectors。这些执行输入不能依赖首次 admission 留下的值，
+因为其他 prefill lane 和 DecodeRound 都会复用同一 workspace；sampling 和 GDN state selectors 同样按当前
+lane 选择。Chunk 完成同步后才能轮转或释放该请求的 transient 区域。
 
 Prefill chunk profile 限制插入两个 decode rounds 之间的 GPU 时间。Executor 在每个 boundary 根据当前
 decode membership 选择 extent：没有 `DECODE_READY` request 时使用 `prefill_chunk`；存在任意
@@ -813,7 +820,7 @@ scheduler work。
 ### 7.4 Joining and leaving decode
 
 - request 在 final prefill/finalization 完成后加入 active decode set；exact retained hit 只省略 suffix work，
-  不绕过现有 prefill owner；
+  仍通过相同资源资格检查和有界 prefill/finalization unit；
 - newly ready request 首次出现在下一个 boundary 构建的 batch；
 - protected-head policy 只影响 admission；backfill 一旦 decode-ready，不得为了保护 waiting head 而从
   maximal batch 中排除；
@@ -1276,7 +1283,7 @@ shared round 中某一行可以安全继续。
 time ───────────────────────────────────────────────────────────►
 
 GPU: Decode[A]
-       │ boundary: admit B as the prefill owner
+       │ boundary: admit B with its own prefill cursor
        ▼
      Prefill[B, chunk 0]
        ▼

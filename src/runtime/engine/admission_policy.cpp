@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <tuple>
 
 namespace ninfer::runtime {
 namespace {
@@ -60,19 +61,20 @@ select_admission_lane(std::span<const LaneAdmissionSnapshot> lanes) noexcept {
         if (lane.processing || (!lane.direct_admission && !lane.admission_after_eviction)) {
             continue;
         }
+        const auto cost = [](const LaneAdmissionSnapshot& value) {
+            return std::tuple(value.lost_queued_tokens, value.lost_retained_tokens,
+                              value.eviction_count, value.lane);
+        };
         const bool prefer = selected == nullptr ||
             lane.reusable_prompt_tokens > selected->reusable_prompt_tokens ||
             (lane.reusable_prompt_tokens == selected->reusable_prompt_tokens &&
-             (lane.direct_admission > selected->direct_admission ||
-              (lane.direct_admission == selected->direct_admission &&
-               (lane.retained_prompt_tokens < selected->retained_prompt_tokens ||
-                (lane.retained_prompt_tokens == selected->retained_prompt_tokens &&
-                 lane.lane < selected->lane)))));
+             cost(lane) < cost(*selected));
         if (prefer) { selected = &lane; }
     }
     if (selected == nullptr) { return std::nullopt; }
     return AdmissionLaneChoice{
-        .lane = selected->lane, .evict_retained = !selected->direct_admission};
+        .lane = selected->lane, .evict_retained = !selected->direct_admission,
+        .eviction_lanes = selected->eviction_lanes, .eviction_count = selected->eviction_count};
 }
 
 std::optional<std::uint32_t>
@@ -81,9 +83,12 @@ select_retained_eviction_lane(std::span<const LaneAdmissionSnapshot> lanes,
     const LaneAdmissionSnapshot* selected = nullptr;
     for (const LaneAdmissionSnapshot& lane : lanes) {
         if (lane.processing || !lane.retained || lane.lane == protected_lane) { continue; }
-        if (selected == nullptr || lane.retained_prompt_tokens < selected->retained_prompt_tokens ||
-            (lane.retained_prompt_tokens == selected->retained_prompt_tokens &&
-             lane.lane < selected->lane)) {
+        const auto cost = [](const LaneAdmissionSnapshot& value) {
+            return std::tuple(value.queued_reusable_prompt_tokens != 0,
+                              value.queued_reusable_prompt_tokens,
+                              value.retained_prompt_tokens, value.lane);
+        };
+        if (selected == nullptr || cost(lane) < cost(*selected)) {
             selected = &lane;
         }
     }

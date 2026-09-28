@@ -39,11 +39,16 @@ int test_retained_lane_admission() {
             reclaimable_pages += pages(lane.retained_prompt_tokens);
         }
     }
+    // Total loss includes the target replacement and the smallest idle victims needed
+    // by each candidate. The matching lane loses 1443 tail tokens plus lane 3's 22276.
+    const std::array<std::uint64_t, 8> cache_loss{
+        227322, 227322, 23719, 227322, 233213, 0, 154648, 0};
     for (auto& lane : lanes) {
         if (lane.processing) { continue; }
         lane.direct_admission = pages(requested_tokens) <=
             free_pages + pages(lane.retained_prompt_tokens);
         lane.admission_after_eviction = pages(requested_tokens) <= free_pages + reclaimable_pages;
+        lane.lost_retained_tokens = cache_loss[lane.lane];
     }
 
     int failures = 0;
@@ -71,9 +76,10 @@ int test_retained_lane_admission() {
                       "infeasible reuse prevented a feasible direct admission");
     lanes[2].admission_after_eviction = true;
     lanes[6].reusable_prompt_tokens = lanes[2].reusable_prompt_tokens;
+    lanes[6].lost_retained_tokens -= lanes[6].reusable_prompt_tokens;
     selected = select_admission_lane(lanes);
-    failures += check(selected && selected->lane == 6 && !selected->evict_retained,
-                      "equal reuse caused unnecessary additional eviction");
+    failures += check(selected && selected->lane == 2 && selected->evict_retained,
+                      "equal reuse ignored the lower total cache loss");
     lanes[6].reusable_prompt_tokens = 0;
     std::reverse(lanes.begin(), lanes.end());
     selected = select_admission_lane(lanes);
@@ -85,6 +91,55 @@ int test_retained_lane_admission() {
     return failures;
 }
 
+int test_queued_cache_replacement() {
+    using ninfer::runtime::LaneAdmissionSnapshot;
+    using ninfer::runtime::select_admission_lane;
+    using ninfer::runtime::select_retained_eviction_lane;
+    std::array<LaneAdmissionSnapshot, 3> lanes{};
+    lanes[0] = {.lane = 0, .retained = true, .retained_prompt_tokens = 181682,
+                .queued_reusable_prompt_tokens = 181369, .direct_admission = true,
+                .lost_queued_tokens = 181369, .lost_retained_tokens = 181682};
+    lanes[1] = {.lane = 1, .admission_after_eviction = true,
+                .lost_retained_tokens = 56000, .eviction_lanes = {2}, .eviction_count = 1};
+    lanes[2] = {.lane = 2, .retained = true, .retained_prompt_tokens = 56000,
+                .direct_admission = true, .lost_retained_tokens = 56000};
+    int failures = 0;
+    auto selected = select_admission_lane(lanes);
+    failures += check(selected && selected->lane == 2,
+                      "cold FIFO request replaced a queued long continuation cache");
+
+    // Empty lane plus a small eviction beats direct replacement of a large cache.
+    lanes[0].queued_reusable_prompt_tokens = 0;
+    lanes[0].lost_queued_tokens = 0;
+    lanes[2].processing = true;
+    selected = select_admission_lane(lanes);
+    failures += check(selected && selected->lane == 1 && selected->eviction_count == 1 &&
+                          selected->eviction_lanes[0] == 2,
+                      "direct admission took precedence over lower total cache loss");
+
+    lanes[2].processing = false;
+    lanes[2].queued_reusable_prompt_tokens = 100;
+    lanes[2].lost_queued_tokens = 100;
+    lanes[0].queued_reusable_prompt_tokens = 181369;
+    lanes[0].lost_queued_tokens = 181369;
+    lanes[1].admission_after_eviction = false;
+    selected = select_admission_lane(lanes);
+    failures += check(selected && selected->lane == 2,
+                      "soft queued cache claims prevented feasible FIFO admission");
+    auto victim = select_retained_eviction_lane(lanes, 1);
+    failures += check(victim && *victim == 2,
+                      "all-claimed fallback did not minimize queued reuse lost");
+    lanes[0].queued_reusable_prompt_tokens = 0;
+    victim = select_retained_eviction_lane(lanes, 1);
+    failures += check(victim && *victim == 0,
+                      "eviction preferred claimed cache over unclaimed idle cache");
+    lanes[0].processing = true;
+    lanes[2].processing = true;
+    failures += check(!select_retained_eviction_lane(lanes, 1),
+                      "queued cache accounting permitted active cache eviction");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -92,7 +147,7 @@ int main() {
     using ninfer::runtime::AdmissionResources;
     using ninfer::runtime::BackfillClass;
 
-    int failures = test_retained_lane_admission();
+    int failures = test_retained_lane_admission() + test_queued_cache_replacement();
     const AdmissionResources capacity{
         .active_lanes     = 4,
         .main_kv_pages    = 160,

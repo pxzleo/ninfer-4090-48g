@@ -2,6 +2,7 @@
 
 #include "serve/openai_schema.h"
 #include "serve/responses_schema.h"
+#include "serve/sse_connection.h"
 
 #include <nlohmann/json.hpp>
 
@@ -24,11 +25,6 @@ namespace {
 
 using Json = nlohmann::json;
 
-class ClientDisconnected final : public std::exception {
-public:
-    [[nodiscard]] const char* what() const noexcept override { return "client disconnected"; }
-};
-
 struct StreamingResponse {
     PreparedRequest prepared;
     ResponsesRequest request;
@@ -36,6 +32,7 @@ struct StreamingResponse {
     RequestLogContext log_context;
     std::unique_ptr<ResponsesEventStream> encoder;
     std::atomic<bool> cancelled{false};
+    SseConnection connection;
     bool started = false;
 };
 
@@ -96,11 +93,7 @@ bool disconnected(const httplib::Request& request) {
 
 void write_stream_item(httplib::DataSink& sink, StreamingResponse& request,
                        const std::string& item) {
-    if (request.cancelled.load(std::memory_order_acquire) ||
-        (sink.is_writable && !sink.is_writable()) || !sink.write(item.data(), item.size())) {
-        request.cancelled.store(true, std::memory_order_release);
-        throw ClientDisconnected();
-    }
+    request.connection.write(sink, request.cancelled, item);
 }
 
 void write_stream_items(httplib::DataSink& sink, StreamingResponse& request,
@@ -289,17 +282,20 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
                 write_stream_items(sink, *stream, stream->encoder->start());
                 StreamSink output;
                 output.on_reasoning = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     write_stream_items(sink, *stream, stream->encoder->reasoning_delta(text));
                 };
                 output.on_content = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     write_stream_items(sink, *stream, stream->encoder->content_delta(text));
                 };
                 output.is_cancelled = [&] {
-                    return stream->cancelled.load(std::memory_order_acquire) ||
-                           (sink.is_writable && !sink.is_writable());
+                    stream->connection.idle(sink, stream->cancelled);
+                    return false;
                 };
 
                 const GenerationOutcome outcome = service_->run(stream->prepared, &output);
+                stream->connection.finishing();
                 ResponsesStreamFinish finished  = stream->encoder->finish(outcome);
                 if (stream->request.store) {
                     StoredResponse stored;

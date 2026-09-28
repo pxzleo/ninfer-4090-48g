@@ -17,20 +17,28 @@ struct LaneAdmissionSnapshot {
     bool retained                       = false;
     std::uint32_t retained_prompt_tokens = 0;
     std::uint32_t reusable_prompt_tokens = 0;
+    std::uint32_t queued_reusable_prompt_tokens = 0;
     bool direct_admission               = false;
     bool admission_after_eviction       = false;
+    std::uint64_t lost_queued_tokens = 0;
+    std::uint64_t lost_retained_tokens = 0;
+    std::array<std::uint32_t, kMaximumConcurrency> eviction_lanes{};
+    std::size_t eviction_count = 0;
 };
 
 struct AdmissionLaneChoice {
     std::uint32_t lane  = 0;
     bool evict_retained = false;
+    std::array<std::uint32_t, kMaximumConcurrency> eviction_lanes{};
+    std::size_t eviction_count = 0;
 };
 
-// Rank all feasible lanes by reuse, then no additional eviction, then replacement cost.
+// Rank feasible lanes by current reuse, queued reuse lost, then total cache lost.
 [[nodiscard]] std::optional<AdmissionLaneChoice>
 select_admission_lane(std::span<const LaneAdmissionSnapshot> lanes) noexcept;
 
-// Protect active requests and the selected continuation; evict the smallest idle cache first.
+// Protect active requests and the selected continuation. Unclaimed idle caches go first;
+// queued cache protection is soft so a feasible FIFO head can always make progress.
 [[nodiscard]] std::optional<std::uint32_t>
 select_retained_eviction_lane(std::span<const LaneAdmissionSnapshot> lanes,
                              std::uint32_t protected_lane) noexcept;

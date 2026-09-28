@@ -342,7 +342,20 @@ re-tokenizing decoded text.
 
 ### Responses streaming
 
-Set `stream:true` for semantic Server-Sent Events. Every frame uses both the SSE event name and a
+All three streaming endpoints (Chat Completions, Responses, and Anthropic Messages) emit
+the SSE comment `: keep-alive` followed by a blank line after five seconds without a successful
+stream write. This applies while the submitted request waits for Engine admission or prefill,
+and between generated deltas. The existing stream writer emits these comments; they contain no
+model output, do not advance Responses event sequence numbers, and do not contribute to token
+usage or first-token timing. Clients must ignore SSE comments. A disconnect is recorded once
+through the request error log, including the stream phase and milliseconds since the last
+successful write.
+
+Request preparation (including media acquisition) still precedes the HTTP stream so preparation
+errors retain their HTTP error status. Keep-alive comments therefore begin only after preparation
+has completed and the SSE response starts.
+
+Set `stream:true` for semantic Server-Sent Events. Every semantic frame uses both the SSE event name and a
 matching JSON `type`, and every JSON event has a monotonically increasing `sequence_number`:
 
 ```text

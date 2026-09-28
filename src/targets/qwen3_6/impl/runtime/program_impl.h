@@ -381,8 +381,9 @@ bool ProgramImplCore::can_admit_lane(std::uint32_t lane, const RequestPlan& plan
     return can_replace(backend->pool(), old_backend, plan.impl_->backend_kv_page_entitlement);
 }
 
-bool ProgramImplCore::can_admit_lane_after_retained_eviction(
-    std::uint32_t lane, const RequestPlan& plan) const noexcept {
+bool ProgramImplCore::can_admit_lane_with_retained_eviction(
+    std::uint32_t lane, const RequestPlan& plan,
+    std::span<const std::uint32_t> victims) const noexcept {
     if (lane >= max_concurrency || plan.impl_ == nullptr) { return false; }
     const RequestControl& request = requests[lane];
     if (request.lifecycle == Lifecycle::Prefilling || request.lifecycle == Lifecycle::Active ||
@@ -392,8 +393,11 @@ bool ProgramImplCore::can_admit_lane_after_retained_eviction(
 
     std::uint32_t reclaimable_text    = 0;
     std::uint32_t reclaimable_backend = 0;
-    for (std::uint32_t other = 0; other < max_concurrency; ++other) {
-        if (other == lane || !sequences[other].retained || !sequences[other].kv) { continue; }
+    std::array<bool, kMaximumConcurrency> seen{};
+    for (const std::uint32_t other : victims) {
+        if (other >= max_concurrency || other == lane || seen[other] ||
+            !sequences[other].retained || !sequences[other].kv) { return false; }
+        seen[other] = true;
         reclaimable_text += sequences[other].kv->text.page_entitlement();
         if (sequences[other].kv->backend) {
             reclaimable_backend += sequences[other].kv->backend->page_entitlement();
@@ -608,18 +612,6 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
         sequence.tail_hidden_valid = base == prompt_tokens && sequence.tail_hidden_valid;
         sequence.ledger.assign(prompt.token_ids.begin(), prompt.token_ids.end());
         sequence.prefix_identity.assign(prompt);
-
-        if (speculative_backend == SpeculativeBackend::DFlash) {
-            if (!dflash || !io.dflash_decode || !sequence.kv->backend) {
-                throw std::logic_error("DFlash prefill state is incomplete");
-            }
-            *dflash_host_ingress                         = {};
-            dflash_host_ingress->lanes[0]                = static_cast<std::int32_t>(sequence.lane);
-            dflash_host_ingress->dflash_kv_table_rows[0] = sequence.kv->backend->bound_row();
-            CUDA_CHECK(cudaMemcpyAsync(io.dflash_decode->ingress.data, dflash_host_ingress,
-                                       sizeof(qwen3_6::DFlashDecodeIngress), cudaMemcpyHostToDevice,
-                                       device.stream));
-        }
 
         const bool host_input_consumed = prompt.has_media() && !request_plan.vision;
         if (host_input_consumed) { prompt.release_media_payload(); }
@@ -1731,6 +1723,22 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
     std::uint32_t processed_prompt_tokens = 0;
     const auto started                    = Clock::now();
     try {
+        // Decode and other prefill lanes share these device ingress scalars.
+        set_device_i32(io.text_kv_table_row, sequence.kv->text.bound_row());
+        set_device_i32(io.backend_kv_table_row,
+                       sequence.kv->backend ? sequence.kv->backend->bound_row() : 0);
+        set_device_i32(io.rope_delta, sequence.rope_delta);
+        if (speculative_backend == SpeculativeBackend::DFlash) {
+            if (!dflash || !io.dflash_decode || !sequence.kv->backend) {
+                throw std::logic_error("DFlash prefill state is incomplete");
+            }
+            *dflash_host_ingress                         = {};
+            dflash_host_ingress->lanes[0]                = static_cast<std::int32_t>(sequence.lane);
+            dflash_host_ingress->dflash_kv_table_rows[0] = sequence.kv->backend->bound_row();
+            CUDA_CHECK(cudaMemcpyAsync(io.dflash_decode->ingress.data, dflash_host_ingress,
+                                       sizeof(qwen3_6::DFlashDecodeIngress), cudaMemcpyHostToDevice,
+                                       device.stream));
+        }
         schedule::PrefillContext schedule_state{
             {device, model, work, decoder->linear_attention,
              replay_records ? &*replay_records : nullptr, io, prefill_hidden, prefill_chunk,

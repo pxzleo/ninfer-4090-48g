@@ -64,6 +64,12 @@ ninfer_add_test(ninfer_tensor_test       SOURCES test_tensor.cpp)
 ninfer_add_test(ninfer_arena_test        SOURCES test_arena.cpp)
 ninfer_add_test(ninfer_request_memory_test SOURCES test_request_memory.cpp)
 ninfer_add_test(ninfer_admission_policy_test SOURCES test_admission_policy.cpp)
+ninfer_add_test(ninfer_concurrent_executor_test
+  SOURCES test_concurrent_executor.cpp
+  NEEDS_SOURCE_DIR
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_concurrent_executor_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
 ninfer_add_test(ninfer_prefill_policy_test SOURCES test_prefill_policy.cpp)
 ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp)
 ninfer_add_test(ninfer_sampling_defaults_test
@@ -137,6 +143,11 @@ set_tests_properties(ninfer_qwen3_6_35b_a3b_dflash_load_plan_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
 # Product protocol contracts.
+add_executable(ninfer_sse_connection_test test_sse_connection.cpp)
+target_include_directories(ninfer_sse_connection_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_sse_connection_test PRIVATE Threads::Threads)
+add_test(NAME ninfer_sse_connection_test COMMAND ninfer_sse_connection_test)
 ninfer_add_test(ninfer_openai_schema_test
   SOURCES test_openai_schema.cpp
   LIBRARIES ninfer_serve)

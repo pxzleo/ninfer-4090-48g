@@ -5,6 +5,7 @@
 #include "serve/openai_schema.h"
 #include "serve/request_log.h"
 #include "serve/slot_files.h"
+#include "serve/sse_connection.h"
 #include "serve/translate.h"
 
 #include <nlohmann/json.hpp>
@@ -36,21 +37,13 @@ struct StreamingRequest {
 
     PreparedRequest prepared;
     std::atomic<bool> cancelled{false};
+    SseConnection connection;
     bool started = false;
-};
-
-class ClientDisconnected final : public std::exception {
-public:
-    [[nodiscard]] const char* what() const noexcept override { return "client disconnected"; }
 };
 
 void write_stream_item(httplib::DataSink& sink, StreamingRequest& request,
                        const std::string& item) {
-    if (request.cancelled.load(std::memory_order_acquire) ||
-        (sink.is_writable && !sink.is_writable()) || !sink.write(item.data(), item.size())) {
-        request.cancelled.store(true, std::memory_order_release);
-        throw ClientDisconnected();
-    }
+    request.connection.write(sink, request.cancelled, item);
 }
 
 void set_owned_content(httplib::Response& response, std::string body,
@@ -629,21 +622,24 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                                   make_chat_chunk_role(id, model, created, include_usage));
                 StreamSink output;
                 output.on_content = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     write_stream_item(
                         sink, *stream,
                         make_chat_chunk_content(id, model, created, text, include_usage));
                 };
                 output.on_reasoning = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     write_stream_item(
                         sink, *stream,
                         make_chat_chunk_reasoning(id, model, created, text, include_usage));
                 };
                 output.is_cancelled = [&] {
-                    return stream->cancelled.load(std::memory_order_acquire) ||
-                           (sink.is_writable && !sink.is_writable());
+                    stream->connection.idle(sink, stream->cancelled);
+                    return false;
                 };
 
                 const GenerationOutcome outcome = service_->run(stream->prepared, &output);
+                stream->connection.finishing();
                 log_request_done(log_context, outcome);
                 const CompletionUsage usage = usage_with_timings(outcome);
                 const std::string_view remaining = unstreamed_content(outcome);
@@ -832,6 +828,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
 
                 StreamSink output;
                 output.on_reasoning = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     if (!thinking_open) {
                         thinking_index = next_index++;
                         thinking_open  = true;
@@ -842,6 +839,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                                       make_content_block_delta_thinking(thinking_index, text));
                 };
                 output.on_content = [&](const std::string& text) {
+                    stream->connection.generation_started();
                     if (thinking_open) {
                         write_stream_item(sink, *stream, make_content_block_stop(thinking_index));
                         thinking_open = false;
@@ -855,11 +853,12 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                                       make_content_block_delta_text(text_index, text));
                 };
                 output.is_cancelled = [&] {
-                    return stream->cancelled.load(std::memory_order_acquire) ||
-                           (sink.is_writable && !sink.is_writable());
+                    stream->connection.idle(sink, stream->cancelled);
+                    return false;
                 };
 
                 const GenerationOutcome outcome = service_->run(stream->prepared, &output);
+                stream->connection.finishing();
                 log_request_done(log_context, outcome);
                 const std::string_view remaining = unstreamed_content(outcome);
 

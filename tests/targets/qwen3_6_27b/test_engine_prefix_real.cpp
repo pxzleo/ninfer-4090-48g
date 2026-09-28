@@ -639,6 +639,59 @@ int verify_loaded_product(const ninfer::Engine& engine) {
     return 0;
 }
 
+int exercise_interleaved_prefill(const char* artifact) {
+    auto engine_config = engine_options(artifact);
+    engine_config.max_concurrency = 2;
+    engine_config.kv_capacity = ninfer::KvCapacityPolicy::explicit_capacity(8192);
+    engine_config.prefill_chunk = 128;
+    engine_config.prefill_chunk_when_decoding = 128;
+    ninfer::Engine engine(engine_config);
+
+    ninfer::RequestOptions request;
+    request.execution.requested_output_tokens = 8;
+    request.execution.sampling.temperature = 0.0F;
+    request.execution.allow_prefix_reuse = false;
+    request.stop.include_model_defaults = false;
+
+    auto vision_input = [] {
+        ninfer::ChatMessage message;
+        message.role = "user";
+        ninfer::MessagePart image;
+        image.kind = ninfer::MessagePartKind::Media;
+        image.media.kind = ninfer::MediaKind::Image;
+        image.media.bytes = gradient_ppm();
+        image.media.media_type = "image/x-portable-pixmap";
+        image.media.source_name = "interleaved.ppm";
+        message.parts.push_back(std::move(image));
+        std::string text = "Describe the image after reading these notes: ";
+        for (int index = 0; index < 800; ++index) { text += "red green blue. "; }
+        message.parts.push_back(ninfer::MessagePart{
+            .kind = ninfer::MessagePartKind::Text, .text = std::move(text), .media = {}});
+        ninfer::PromptInput input;
+        input.messages.push_back(std::move(message));
+        input.options.enable_thinking = false;
+        return input;
+    };
+    const std::vector<ninfer::TokenId> text_tokens(1536, 198);
+    const auto text_reference = engine.generate(engine.prepare_tokens(text_tokens), request);
+    const auto vision_reference = engine.generate(engine.prepare(vision_input()), request);
+    auto text_prompt = engine.prepare_tokens(text_tokens);
+    auto vision_prompt = engine.prepare(vision_input());
+    auto text = engine.submit(std::move(text_prompt), request);
+    auto vision = engine.submit(std::move(vision_prompt), request);
+    const auto text_result = text.wait();
+    const auto vision_result = vision.wait();
+    if (text_result.generated_token_ids != text_reference.generated_token_ids ||
+        vision_result.generated_token_ids != vision_reference.generated_token_ids ||
+        text_result.generated_token_ids.size() != 8 ||
+        vision_result.generated_token_ids.size() != 8 ||
+        engine.memory_summary().request_transient.used_bytes != 0) {
+        std::cerr << "interleaved Text/Vision prefill changed greedy output or leaked transient\n";
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 int exercise_artifact(const char* artifact) {
@@ -661,7 +714,10 @@ int exercise_artifact(const char* artifact) {
     if (const int result = exercise_generation_checkpoints(artifact); result != 0) {
         return result;
     }
-    return exercise_auto_save_evicted(artifact);
+    if (const int result = exercise_auto_save_evicted(artifact); result != 0) {
+        return result;
+    }
+    return exercise_interleaved_prefill(artifact);
 }
 
 int main() {

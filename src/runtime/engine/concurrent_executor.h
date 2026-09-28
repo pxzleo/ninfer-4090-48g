@@ -324,7 +324,7 @@ private:
             std::lock_guard lock(queue_mutex_);
             snapshot.waiting_requests = static_cast<std::uint32_t>(pending_.size());
         }
-        snapshot.prefilling_requests = prefill_lane_.has_value() ? 1U : 0U;
+        snapshot.prefilling_requests = prefilling_request_count();
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
             const std::uint32_t resident_kv_tokens =
                 instance_.program->main_kv_cache_tokens_lane(lane);
@@ -343,7 +343,7 @@ private:
                 .generated_tokens        = static_cast<std::uint32_t>(request->generated.size()),
                 .resident_kv_tokens      = resident_kv_tokens,
                 .active                  = true,
-                .prefilling              = prefill_lane_ && *prefill_lane_ == lane,
+                .prefilling              = !request->decode_ready,
                 .decode_ready             = request->decode_ready,
             };
         }
@@ -357,7 +357,7 @@ private:
             if (request != nullptr) {
                 state.processing    = true;
                 state.prompt_tokens = request->prompt_summary.prompt_tokens;
-                if (request->begin) { state.cached_tokens = request->begin->reused_prompt_tokens; }
+                state.cached_tokens = request->reusable_prompt_tokens;
             } else if (instance_.program->has_retained_lane(lane)) {
                 state.retained       = true;
                 state.prompt_tokens  = instance_.program->retained_lane_depth(lane);
@@ -693,10 +693,7 @@ private:
             const auto& request = slots_[lane];
             if (request == nullptr || !cancelled_at_boundary[lane]) { continue; }
             instance_.program->abort_lane(lane);
-            if (prefill_lane_ && *prefill_lane_ == lane) {
-                instance_.request_memory.deactivate();
-                prefill_lane_.reset();
-            }
+            instance_.request_memory.deactivate(lane);
             complete_cancelled(request);
             remove_completed_slot(lane);
             changed = true;
@@ -780,6 +777,9 @@ private:
 
     void resolve_prefill_step(const std::shared_ptr<Request>& request,
                               const PrefillStepResult& step, bool cancel_at_boundary) {
+        // Publish the actual reuse as soon as a chunk returns, including cancelled partial
+        // prefill. Waiting until finalization misreports those requests as cold resets.
+        request->begin = step.summary;
         cumulative_stats_.computed_prefill_tokens += step.processed_prompt_tokens;
         request->processed_prompt_tokens += step.processed_prompt_tokens;
         consume_service_work(request, prefill_policy_.service_quanta(step.processed_prompt_tokens));
@@ -787,10 +787,7 @@ private:
         if (cancel_at_boundary) {
             if (!request->lane) { throw std::logic_error("cancelled prefill has no request lane"); }
             const std::uint32_t lane = *request->lane;
-            if (prefill_lane_ && lane == *prefill_lane_) {
-                instance_.request_memory.deactivate();
-                prefill_lane_.reset();
-            }
+            instance_.request_memory.deactivate(lane);
             instance_.program->abort_lane(lane);
             complete_cancelled(request);
             remove_completed_slot(lane);
@@ -798,11 +795,7 @@ private:
         }
         if (!step.complete) { return; }
         if (!request->lane) { throw std::logic_error("completed prefill has no request lane"); }
-        if (prefill_lane_ && *request->lane == *prefill_lane_) {
-            instance_.request_memory.deactivate();
-            prefill_lane_.reset();
-        }
-        request->begin = step.summary;
+        instance_.request_memory.deactivate(*request->lane);
         if (step.round.tokens.size() != 1) {
             throw std::logic_error("prefill did not license exactly one token");
         }
@@ -813,9 +806,21 @@ private:
         }
     }
 
+    [[nodiscard]] std::uint32_t prefilling_request_count() const noexcept {
+        std::uint32_t count = 0;
+        for (const auto& request : slots_) {
+            if (request != nullptr && !request->decode_ready) { ++count; }
+        }
+        return count;
+    }
+
     void run_prefill_step() {
-        if (!prefill_lane_) { throw std::logic_error("no request owns staged prefill"); }
-        const std::uint32_t lane = *prefill_lane_;
+        std::uint32_t lane = next_prefill_lane_;
+        for (std::uint32_t i = 0; i < max_concurrency_; ++i) {
+            lane = (next_prefill_lane_ + i) % max_concurrency_;
+            if (slots_[lane] != nullptr && !slots_[lane]->decode_ready) { break; }
+        }
+        next_prefill_lane_ = (lane + 1) % max_concurrency_;
         const auto request       = slots_[lane];
         if (request == nullptr || request->decode_ready) {
             throw std::logic_error("staged prefill lane has invalid request state");
@@ -889,21 +894,78 @@ private:
         };
     }
 
-    // Compare direct admission and admission after idle-cache eviction together, so a cold
-    // lane cannot bypass a reusable continuation merely because it can reclaim its own cache.
+    // Look at the prepared queue before replacing idle state. A queued continuation's
+    // claim is soft: it changes replacement cost, never prevents a feasible FIFO admission.
     [[nodiscard]] std::optional<LaneChoice>
     find_admission_lane(const std::shared_ptr<Request>& request) {
+        transient_blocked_ = false;
         std::array<LaneAdmissionSnapshot, kMaximumConcurrency> lanes{};
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            lanes[lane] = lane_admission_snapshot(lane);
+        }
+        for (const auto& queued : pending_snapshot()) {
+            if (queued == request || queued->cancelled.load(std::memory_order_acquire) ||
+                Clock::now() >= queued->deadline) { continue; }
+            try {
+                ensure_base_plan(queued);
+                if (!admission_resources_fit(queued->base_plan->summary().admission,
+                                             admission_capacity_)) {
+                    (void)remove_pending_error(
+                        queued, std::make_exception_ptr(RequestError(
+                                    RequestErrorKind::ContextLengthExceeded,
+                                    "request reservation exceeds Engine shared KV capacity")));
+                    continue;
+                }
+                std::array<std::uint32_t, kMaximumConcurrency> claims{};
+                for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                    if (lanes[lane].processing || !lanes[lane].retained) { continue; }
+                    ensure_lane_plan(queued, lane);
+                    claims[lane] = queued->lane_plans[lane]->summary().reusable_prompt_tokens;
+                }
+                for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                    lanes[lane].queued_reusable_prompt_tokens = std::max(
+                        lanes[lane].queued_reusable_prompt_tokens, claims[lane]);
+                }
+            } catch (...) {
+                (void)remove_pending_error(queued, std::current_exception());
+            }
+        }
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
             LaneAdmissionSnapshot& candidate = lanes[lane];
-            candidate = lane_admission_snapshot(lane);
             if (candidate.processing) { continue; }
             ensure_lane_plan(request, lane);
             const Plan& plan = *request->lane_plans[lane];
-            candidate.reusable_prompt_tokens = plan.summary().reusable_prompt_tokens;
+            const auto& summary = plan.summary();
+            candidate.reusable_prompt_tokens = summary.reusable_prompt_tokens;
+            candidate.lost_retained_tokens = candidate.retained_prompt_tokens >
+                summary.reusable_prompt_tokens
+                    ? candidate.retained_prompt_tokens - summary.reusable_prompt_tokens : 0;
+            candidate.lost_queued_tokens = candidate.queued_reusable_prompt_tokens >
+                summary.reusable_prompt_tokens
+                    ? candidate.queued_reusable_prompt_tokens - summary.reusable_prompt_tokens : 0;
             candidate.direct_admission = instance_.program->can_admit_lane(lane, plan);
-            candidate.admission_after_eviction = !candidate.direct_admission &&
-                instance_.program->can_admit_lane_after_retained_eviction(lane, plan);
+            if (!candidate.direct_admission) {
+                auto victims = lanes;
+                while (const auto victim = select_retained_eviction_lane(
+                           {victims.data(), max_concurrency_}, lane)) {
+                    candidate.eviction_lanes[candidate.eviction_count++] = *victim;
+                    candidate.lost_retained_tokens += lanes[*victim].retained_prompt_tokens;
+                    candidate.lost_queued_tokens += lanes[*victim].queued_reusable_prompt_tokens;
+                    victims[*victim].retained = false;
+                    if (instance_.program->can_admit_lane_with_retained_eviction(
+                            lane, plan, {candidate.eviction_lanes.data(), candidate.eviction_count})) {
+                        candidate.admission_after_eviction = true;
+                        break;
+                    }
+                }
+            }
+            if ((candidate.direct_admission || candidate.admission_after_eviction) &&
+                !instance_.request_memory.can_activate(lane, summary.transient_bytes,
+                                                       summary.transient_alignment)) {
+                transient_blocked_ = true;
+                candidate.direct_admission = false;
+                candidate.admission_after_eviction = false;
+            }
         }
         return select_admission_lane({lanes.data(), max_concurrency_});
     }
@@ -939,22 +1001,20 @@ private:
         if (!request->lane_plans[lane]) {
             throw std::logic_error("selected admission lane has no request plan");
         }
-        if (choice.evict_retained) {
-            while (!instance_.program->can_admit_lane(lane, *request->lane_plans[lane])) {
-                std::array<LaneAdmissionSnapshot, kMaximumConcurrency> lanes{};
-                for (std::uint32_t candidate = 0; candidate < max_concurrency_; ++candidate) {
-                    lanes[candidate] = lane_admission_snapshot(candidate);
-                }
-                const auto victim = select_retained_eviction_lane(
-                    {lanes.data(), max_concurrency_}, lane);
-                if (!victim) {
-                    throw std::logic_error("retained eviction did not make admission feasible");
-                }
-                spill_retained_lane(*victim);
-                lane_session_path_[*victim].clear();
-                instance_.program->evict_retained_lane(*victim);
-                invalidate_lane_plans(*victim);
+        // Use the exact victims qualified during selection; no second eviction policy.
+        for (std::size_t i = 0; i < choice.eviction_count; ++i) {
+            const std::uint32_t victim = choice.eviction_lanes[i];
+            if (victim == lane || slots_[victim] != nullptr ||
+                !instance_.program->has_retained_lane(victim)) {
+                throw std::logic_error("qualified eviction victim is no longer idle and retained");
             }
+            spill_retained_lane(victim);
+            lane_session_path_[victim].clear();
+            instance_.program->evict_retained_lane(victim);
+            invalidate_lane_plans(victim);
+        }
+        if (!instance_.program->can_admit_lane(lane, *request->lane_plans[lane])) {
+            throw std::logic_error("qualified retained eviction did not make admission feasible");
         }
 
         Plan selected_plan = std::move(*request->lane_plans[lane]);
@@ -998,10 +1058,9 @@ private:
 
             TransientRegion transient;
             if (needs_prefill) {
-                instance_.request_memory.activate(summary.transient_bytes,
+                instance_.request_memory.activate(lane, summary.transient_bytes,
                                                   summary.transient_alignment);
-                prefill_lane_ = lane;
-                transient     = instance_.request_memory.region();
+                transient = instance_.request_memory.region(lane);
             }
             publish_runtime_stats();
             target_started                = true;
@@ -1011,19 +1070,13 @@ private:
                 selected_prefill_chunk());
             cumulative_stats_.prefill_seconds_total +=
                 std::chrono::duration<double>(Clock::now() - unit_started).count();
-            if (!first.complete && (!prefill_lane_ || *prefill_lane_ != lane)) {
-                throw std::logic_error("partial prefill did not retain its execution owner");
-            }
             const bool cancel_at_boundary = request->cancelled.load(std::memory_order_acquire);
             resolve_prefill_step(request, first, cancel_at_boundary);
             publish_runtime_stats();
         } catch (...) {
             const std::exception_ptr error = std::current_exception();
             if (target_started) { instance_.program->abort_lane(lane); }
-            if (prefill_lane_ && *prefill_lane_ == lane) {
-                instance_.request_memory.deactivate();
-                prefill_lane_.reset();
-            }
+            instance_.request_memory.deactivate(lane);
             slots_[lane].reset();
             invalidate_lane_plans(lane);
             complete_error(request, error);
@@ -1090,6 +1143,17 @@ private:
                 return admit_planned_request(head, *head_lane, BackfillClass::None, 0);
             }
 
+            // A fragmented or occupied transient arena cannot be reclaimed from a retained
+            // cache. Let admitted prefill drain, without inventing a KV protection epoch.
+            if (transient_blocked_) {
+                if (instance_.request_memory.summary().used_bytes == 0) {
+                    (void)remove_pending_error(head, std::make_exception_ptr(std::logic_error(
+                        "planned request transient exceeds the frozen Engine capacity")));
+                    control_progress = true;
+                    continue;
+                }
+                return control_progress ? AdmissionProgress::ControlProgress : AdmissionProgress::None;
+            }
             const ActiveAdmissionSet active = active_admission_set();
             if (active.size == 0) {
                 throw std::logic_error("exclusive-feasible request cannot enter an idle Engine");
@@ -1268,14 +1332,11 @@ private:
             pending.assign(pending_.begin(), pending_.end());
             pending_.clear();
         }
-        if (prefill_lane_) {
-            instance_.request_memory.deactivate();
-            prefill_lane_.reset();
-        }
         protection_.reset();
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
             if (slots_[lane] != nullptr) {
                 instance_.program->abort_lane(lane);
+                instance_.request_memory.deactivate(lane);
                 complete_error(slots_[lane], error);
                 slots_[lane].reset();
             }
@@ -1286,6 +1347,7 @@ private:
 
     void worker_loop() noexcept {
         bool previous_unit_was_decode = false;
+        bool previous_prefill_was_admission = false;
         for (;;) {
             {
                 std::unique_lock lock(queue_mutex_);
@@ -1313,26 +1375,25 @@ private:
                 cancel_active_requests(cancelled_at_boundary);
                 const RoundMembership membership = build_round_membership();
 
-                if (prefill_lane_) {
-                    if (!membership.empty() && !previous_unit_was_decode) {
-                        run_decode_round(membership);
-                        previous_unit_was_decode = true;
-                    } else {
-                        run_prefill_step();
-                        previous_unit_was_decode = false;
-                    }
-                    continue;
-                }
-
-                if (have_pending && (membership.empty() || previous_unit_was_decode)) {
+                const bool have_prefill = prefilling_request_count() != 0;
+                if (have_pending && (membership.empty() || previous_unit_was_decode) &&
+                    (!have_prefill || !previous_prefill_was_admission)) {
                     const AdmissionProgress progress = try_admit_one();
                     if (progress == AdmissionProgress::RanGpuUnit) {
                         previous_unit_was_decode = false;
+                        previous_prefill_was_admission = true;
                         continue;
                     }
                     if (progress == AdmissionProgress::ControlProgress && membership.empty()) {
                         continue;
                     }
+                }
+
+                if (have_prefill && (membership.empty() || previous_unit_was_decode)) {
+                    run_prefill_step();
+                    previous_unit_was_decode = false;
+                    previous_prefill_was_admission = false;
+                    continue;
                 }
 
                 if (!membership.empty()) {
@@ -1363,7 +1424,8 @@ private:
     std::size_t outstanding_       = 0;
     std::uint64_t next_request_id_ = 1;
     std::array<std::shared_ptr<Request>, kMaximumConcurrency> slots_{};
-    std::optional<std::uint32_t> prefill_lane_;
+    std::uint32_t next_prefill_lane_ = 0;
+    bool transient_blocked_ = false;
     std::array<std::uint64_t, kMaximumConcurrency> lane_plan_versions_{};
     std::optional<AdmissionProtection> protection_;
     std::uint64_t next_protection_epoch_ = 1;

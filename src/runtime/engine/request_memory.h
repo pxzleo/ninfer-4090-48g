@@ -12,8 +12,8 @@ struct DeviceContext;
 
 namespace runtime {
 
-// Owns the startup-frozen request transient allocation. Requests activate only a prefix; no
-// request-time device allocation or replacement is permitted.
+// Owns one startup-frozen allocation shared by bounded, non-overlapping lane regions.
+// Active regions never move; request-time device allocation or replacement is forbidden.
 class RequestMemory {
 public:
     static constexpr std::size_t kDeviceAllocationAlignment = 256;
@@ -26,10 +26,14 @@ public:
     RequestMemory(RequestMemory&&)                 = delete;
     RequestMemory& operator=(RequestMemory&&)      = delete;
 
-    void activate(std::size_t bytes, std::size_t alignment);
-    void deactivate() noexcept;
+    [[nodiscard]] bool can_activate(std::uint32_t lane, std::size_t bytes,
+                                    std::size_t alignment) const;
+    void activate(std::uint32_t lane, std::size_t bytes, std::size_t alignment);
+    // An invalid lane is ignored by this noexcept cleanup operation.
+    void deactivate(std::uint32_t lane) noexcept;
 
-    [[nodiscard]] TransientRegion region() const noexcept;
+    [[nodiscard]] TransientRegion region(std::uint32_t lane) const;
+    // Aggregate reserved bytes include each active region's leading alignment padding.
     [[nodiscard]] ArenaMemorySummary summary() const noexcept;
     void reset_peak() noexcept;
 

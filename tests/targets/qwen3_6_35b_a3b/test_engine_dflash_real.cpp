@@ -228,8 +228,15 @@ int main() {
         1710,   248046, 198, 248045, 74455, 198,   248068, 198,
     };
     std::vector<ninfer::TokenId> target_output;
+    const std::vector<ninfer::TokenId> long_first(512, 198);
+    const std::vector<ninfer::TokenId> long_second(768, 199);
+    std::vector<ninfer::TokenId> long_first_output;
+    std::vector<ninfer::TokenId> long_second_output;
     {
-        ninfer::Engine ordinary(ordinary_engine_options(artifact));
+        auto options = ordinary_engine_options(artifact);
+        options.max_context = 1024;
+        options.kv_capacity = ninfer::KvCapacityPolicy::explicit_capacity(1024);
+        ninfer::Engine ordinary(options);
         target_output =
             ordinary.generate(ordinary.prepare_tokens(prompt), greedy_options(24, false))
                 .generated_token_ids;
@@ -237,6 +244,12 @@ int main() {
             std::cerr << "ordinary target baseline did not generate 24 tokens\n";
             return 1;
         }
+        long_first_output =
+            ordinary.generate(ordinary.prepare_tokens(long_first), greedy_options(8, false))
+                .generated_token_ids;
+        long_second_output =
+            ordinary.generate(ordinary.prepare_tokens(long_second), greedy_options(8, false))
+                .generated_token_ids;
     }
 
     {
@@ -259,6 +272,26 @@ int main() {
         if (!valid(first_result, 17) || !valid(second_result, 9)) {
             std::cerr << "concurrent full-head DFlash Graph route diverged from ordinary target "
                          "output\n";
+            return 1;
+        }
+    }
+
+    {
+        auto options = dflash_engine_options(artifact, ninfer::ProposalHead::Full, 1024);
+        options.max_concurrency = 2;
+        options.kv_capacity = ninfer::KvCapacityPolicy::explicit_capacity(2048);
+        ninfer::Engine interleaved(options);
+        auto first_prompt = interleaved.prepare_tokens(long_first);
+        auto second_prompt = interleaved.prepare_tokens(long_second);
+        auto first = interleaved.submit(std::move(first_prompt), greedy_options(8, false));
+        auto second = interleaved.submit(std::move(second_prompt), greedy_options(8, false));
+        const auto first_result = first.wait();
+        const auto second_result = second.wait();
+        if (first_result.generated_token_ids != long_first_output ||
+            second_result.generated_token_ids != long_second_output ||
+            first_result.generated_token_ids.size() != 8 ||
+            second_result.generated_token_ids.size() != 8) {
+            std::cerr << "interleaved DFlash prefill changed ordinary greedy target output\n";
             return 1;
         }
     }

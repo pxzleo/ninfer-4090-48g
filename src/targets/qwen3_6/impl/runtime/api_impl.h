@@ -154,9 +154,10 @@ bool Program<Variant>::can_admit_lane(std::uint32_t lane,
 }
 
 template <>
-bool Program<Variant>::can_admit_lane_after_retained_eviction(
-    std::uint32_t lane, const RequestPlan<Variant>& plan) const noexcept {
-    return impl_->can_admit_lane_after_retained_eviction(lane, plan);
+bool Program<Variant>::can_admit_lane_with_retained_eviction(
+    std::uint32_t lane, const RequestPlan<Variant>& plan,
+    std::span<const std::uint32_t> victims) const noexcept {
+    return impl_->can_admit_lane_with_retained_eviction(lane, plan, victims);
 }
 
 template <>
