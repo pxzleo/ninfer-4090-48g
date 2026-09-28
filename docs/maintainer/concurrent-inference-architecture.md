@@ -690,7 +690,12 @@ block-table 和 allocator 的 contract 属于 Paged KV Context Store，不在本
 Retained prefix 是从已结束 request 中分离出来的、单一 owner 的 SequenceState。它留在原 physical lane，
 但该 lane 的 control slot 对 scheduler 是 free。Retained state 只发布 target 已保存完整 continuation state
 的 checkpoints。当前 Qwen3.6 retained state 可以发布 current
-resume frontier，以及一份有效时的 turn checkpoint。两者引用同一份 KV allocation；turn checkpoint
+resume frontier，以及有效的 generation checkpoint、独立的当前 user-turn 主机 checkpoint 和可选历史环。
+普通 Text/Vision 与 MTP 在最近生成 assistant header 后、thinking opener 前保存 generation checkpoint；
+user-turn 主机副本保留最后一个 user 后首个 assistant header 的完整状态，即使历史环容量为零也保留。
+冷工具历史按 user、generation 两个边界顺序捕获；user 状态复制到主机完成后才覆盖同一 device 槽。
+DFlash 维持原先单一 user-turn device checkpoint，不使用主机恢复路径。
+这些边界引用同一份 KV allocation；checkpoint
 额外保存对应的 recurrent、hidden、speculative-backend 和 position state，
 不复制 KV payload。
 
@@ -713,6 +718,11 @@ limit 和 output state 始终由新 request 创建。
 Retained state 占用实际 state-pool memory，但不占 active control slot，也不保留 future growth
 reservation。Active admission 优先；cache occupancy 阻塞原本可行的 request 前，先驱逐 free lanes 上的
 retained entries。Planner 不复制或迁移 retained physical state，而是在 free lanes 中选择最大合法 reuse。
+所有可直接入场与驱逐其他空闲缓存后可入场的 lane 必须一起比较，先选择 reusable prompt tokens 最多的
+候选；不能因为另一个零复用 lane 可以直接入场而跳过原 lane 的 continuation。复用量相同时，优先不需
+额外驱逐的候选，再选择自身 retained depth 最小的 lane，同值按 lane index 排序。
+需要释放其他 retained entries 时，按 retained depth 从小到大驱逐空闲 lane，容量足够立即停止；正在
+prefill/decode 的 lane 和本次选中的 continuation lane 均不得作为驱逐对象。
 只有在 slot/lane 和完整 entitlement 都已满足后才能 claim cache ownership。
 
 Prefix lookup 只改变 uncached prompt work 和 prospective reuse plan，不自行授予 queue priority。它可以保守地

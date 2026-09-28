@@ -6,9 +6,34 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace ninfer::runtime {
+
+struct LaneAdmissionSnapshot {
+    std::uint32_t lane                   = 0;
+    bool processing                     = false;
+    bool retained                       = false;
+    std::uint32_t retained_prompt_tokens = 0;
+    std::uint32_t reusable_prompt_tokens = 0;
+    bool direct_admission               = false;
+    bool admission_after_eviction       = false;
+};
+
+struct AdmissionLaneChoice {
+    std::uint32_t lane  = 0;
+    bool evict_retained = false;
+};
+
+// Rank all feasible lanes by reuse, then no additional eviction, then replacement cost.
+[[nodiscard]] std::optional<AdmissionLaneChoice>
+select_admission_lane(std::span<const LaneAdmissionSnapshot> lanes) noexcept;
+
+// Protect active requests and the selected continuation; evict the smallest idle cache first.
+[[nodiscard]] std::optional<std::uint32_t>
+select_retained_eviction_lane(std::span<const LaneAdmissionSnapshot> lanes,
+                             std::uint32_t protected_lane) noexcept;
 
 enum class BackfillClass : std::uint8_t {
     None,

@@ -505,10 +505,7 @@ private:
         RanGpuUnit,
     };
 
-    struct LaneChoice {
-        std::uint32_t lane  = 0;
-        bool evict_retained = false;
-    };
+    using LaneChoice = AdmissionLaneChoice;
 
     void append_output(const std::shared_ptr<Request>& request,
                        targets::qwen3_6::PublishedOutput output) {
@@ -882,50 +879,33 @@ private:
         request->lane_plan_versions[lane] = lane_plan_versions_[lane];
     }
 
-    // Lane choice maximizes reusable prefix; ties break toward the lane whose occupation costs
-    // least to replace - an empty lane before any retained session, then the shallowest
-    // retained session - so a fresh request never clobbers a deep resident session while a
-    // cheaper lane is available.
+    [[nodiscard]] LaneAdmissionSnapshot lane_admission_snapshot(std::uint32_t lane) const {
+        const bool processing = slots_[lane] != nullptr;
+        return LaneAdmissionSnapshot{
+            .lane = lane,
+            .processing = processing,
+            .retained = !processing && instance_.program->has_retained_lane(lane),
+            .retained_prompt_tokens = processing ? 0U : instance_.program->retained_lane_depth(lane),
+        };
+    }
+
+    // Compare direct admission and admission after idle-cache eviction together, so a cold
+    // lane cannot bypass a reusable continuation merely because it can reclaim its own cache.
     [[nodiscard]] std::optional<LaneChoice>
     find_admission_lane(const std::shared_ptr<Request>& request) {
-        std::optional<LaneChoice> selected;
-        std::uint32_t selected_reuse = 0;
-        std::uint32_t selected_cost  = 0;
-        const auto prefer            = [&](std::uint32_t reuse, std::uint32_t cost) {
-            return !selected || reuse > selected_reuse ||
-                   (reuse == selected_reuse && cost < selected_cost);
-        };
+        std::array<LaneAdmissionSnapshot, kMaximumConcurrency> lanes{};
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
-            if (slots_[lane] != nullptr) { continue; }
+            LaneAdmissionSnapshot& candidate = lanes[lane];
+            candidate = lane_admission_snapshot(lane);
+            if (candidate.processing) { continue; }
             ensure_lane_plan(request, lane);
-            const Plan& plan          = *request->lane_plans[lane];
-            const std::uint32_t reuse = plan.summary().reusable_prompt_tokens;
-            const std::uint32_t cost  = instance_.program->retained_lane_depth(lane);
-            if (instance_.program->can_admit_lane(lane, plan) && prefer(reuse, cost)) {
-                selected       = LaneChoice{.lane = lane};
-                selected_reuse = reuse;
-                selected_cost  = cost;
-            }
+            const Plan& plan = *request->lane_plans[lane];
+            candidate.reusable_prompt_tokens = plan.summary().reusable_prompt_tokens;
+            candidate.direct_admission = instance_.program->can_admit_lane(lane, plan);
+            candidate.admission_after_eviction = !candidate.direct_admission &&
+                instance_.program->can_admit_lane_after_retained_eviction(lane, plan);
         }
-        if (selected) { return selected; }
-
-        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
-            if (slots_[lane] != nullptr) { continue; }
-            ensure_lane_plan(request, lane);
-            const Plan& plan          = *request->lane_plans[lane];
-            const std::uint32_t reuse = plan.summary().reusable_prompt_tokens;
-            const std::uint32_t cost  = instance_.program->retained_lane_depth(lane);
-            if (instance_.program->can_admit_lane_after_retained_eviction(lane, plan) &&
-                prefer(reuse, cost)) {
-                selected = LaneChoice{
-                    .lane           = lane,
-                    .evict_retained = true,
-                };
-                selected_reuse = reuse;
-                selected_cost  = cost;
-            }
-        }
-        return selected;
+        return select_admission_lane({lanes.data(), max_concurrency_});
     }
 
     [[nodiscard]] AdmissionProgress remove_pending_error(const std::shared_ptr<Request>& request,
@@ -960,20 +940,20 @@ private:
             throw std::logic_error("selected admission lane has no request plan");
         }
         if (choice.evict_retained) {
-            for (std::uint32_t retained_lane = 0;
-                 retained_lane < max_concurrency_ &&
-                 !instance_.program->can_admit_lane(lane, *request->lane_plans[lane]);
-                 ++retained_lane) {
-                if (retained_lane != lane && slots_[retained_lane] == nullptr &&
-                    instance_.program->has_retained_lane(retained_lane)) {
-                    spill_retained_lane(retained_lane);
-                    lane_session_path_[retained_lane].clear();
-                    instance_.program->evict_retained_lane(retained_lane);
-                    invalidate_lane_plans(retained_lane);
+            while (!instance_.program->can_admit_lane(lane, *request->lane_plans[lane])) {
+                std::array<LaneAdmissionSnapshot, kMaximumConcurrency> lanes{};
+                for (std::uint32_t candidate = 0; candidate < max_concurrency_; ++candidate) {
+                    lanes[candidate] = lane_admission_snapshot(candidate);
                 }
-            }
-            if (!instance_.program->can_admit_lane(lane, *request->lane_plans[lane])) {
-                throw std::logic_error("retained eviction did not make admission feasible");
+                const auto victim = select_retained_eviction_lane(
+                    {lanes.data(), max_concurrency_}, lane);
+                if (!victim) {
+                    throw std::logic_error("retained eviction did not make admission feasible");
+                }
+                spill_retained_lane(*victim);
+                lane_session_path_[*victim].clear();
+                instance_.program->evict_retained_lane(*victim);
+                invalidate_lane_plans(*victim);
             }
         }
 

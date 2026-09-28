@@ -53,6 +53,43 @@ bool is_donor(const AdmissionProtection& protection, std::uint64_t id) noexcept 
 
 } // namespace
 
+std::optional<AdmissionLaneChoice>
+select_admission_lane(std::span<const LaneAdmissionSnapshot> lanes) noexcept {
+    const LaneAdmissionSnapshot* selected = nullptr;
+    for (const LaneAdmissionSnapshot& lane : lanes) {
+        if (lane.processing || (!lane.direct_admission && !lane.admission_after_eviction)) {
+            continue;
+        }
+        const bool prefer = selected == nullptr ||
+            lane.reusable_prompt_tokens > selected->reusable_prompt_tokens ||
+            (lane.reusable_prompt_tokens == selected->reusable_prompt_tokens &&
+             (lane.direct_admission > selected->direct_admission ||
+              (lane.direct_admission == selected->direct_admission &&
+               (lane.retained_prompt_tokens < selected->retained_prompt_tokens ||
+                (lane.retained_prompt_tokens == selected->retained_prompt_tokens &&
+                 lane.lane < selected->lane)))));
+        if (prefer) { selected = &lane; }
+    }
+    if (selected == nullptr) { return std::nullopt; }
+    return AdmissionLaneChoice{
+        .lane = selected->lane, .evict_retained = !selected->direct_admission};
+}
+
+std::optional<std::uint32_t>
+select_retained_eviction_lane(std::span<const LaneAdmissionSnapshot> lanes,
+                             std::uint32_t protected_lane) noexcept {
+    const LaneAdmissionSnapshot* selected = nullptr;
+    for (const LaneAdmissionSnapshot& lane : lanes) {
+        if (lane.processing || !lane.retained || lane.lane == protected_lane) { continue; }
+        if (selected == nullptr || lane.retained_prompt_tokens < selected->retained_prompt_tokens ||
+            (lane.retained_prompt_tokens == selected->retained_prompt_tokens &&
+             lane.lane < selected->lane)) {
+            selected = &lane;
+        }
+    }
+    return selected == nullptr ? std::nullopt : std::optional<std::uint32_t>(selected->lane);
+}
+
 bool admission_resources_fit(const AdmissionResources& used,
                              const AdmissionResources& capacity) noexcept {
     ResourceTotals total;
