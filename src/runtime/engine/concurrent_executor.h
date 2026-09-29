@@ -1346,7 +1346,7 @@ private:
     }
 
     void worker_loop() noexcept {
-        bool previous_unit_was_decode = false;
+        std::uint32_t decode_rounds_since_prefill = 0;
         bool previous_prefill_was_admission = false;
         for (;;) {
             {
@@ -1376,11 +1376,11 @@ private:
                 const RoundMembership membership = build_round_membership();
 
                 const bool have_prefill = prefilling_request_count() != 0;
-                if (have_pending && (membership.empty() || previous_unit_was_decode) &&
+                if (have_pending && (membership.empty() || decode_rounds_since_prefill >= 2) &&
                     (!have_prefill || !previous_prefill_was_admission)) {
                     const AdmissionProgress progress = try_admit_one();
                     if (progress == AdmissionProgress::RanGpuUnit) {
-                        previous_unit_was_decode = false;
+                        decode_rounds_since_prefill = 0;
                         previous_prefill_was_admission = true;
                         continue;
                     }
@@ -1389,16 +1389,16 @@ private:
                     }
                 }
 
-                if (have_prefill && (membership.empty() || previous_unit_was_decode)) {
+                if (have_prefill && (membership.empty() || decode_rounds_since_prefill >= 2)) {
                     run_prefill_step();
-                    previous_unit_was_decode = false;
+                    decode_rounds_since_prefill = 0;
                     previous_prefill_was_admission = false;
                     continue;
                 }
 
                 if (!membership.empty()) {
                     run_decode_round(membership);
-                    previous_unit_was_decode = true;
+                    if (decode_rounds_since_prefill < 2) { ++decode_rounds_since_prefill; }
                     continue;
                 }
             } catch (...) {

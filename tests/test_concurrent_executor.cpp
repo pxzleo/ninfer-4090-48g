@@ -291,6 +291,30 @@ struct Harness {
     }
 };
 
+void two_decode_rounds_between_prefill_units() {
+    Harness test;
+    auto decoding = test.submit(0, 2, 5);
+    auto& gate = test.instance.program->gate;
+    require(!gate.wait(1).decode, "initial request did not begin with prefill");
+    auto prefilling = test.submit(1, 32);
+    // Admission's first chunk and subsequent chunks share the same two-round gate.
+    // Once the decode request finishes, prefill must continue without waiting for rounds.
+    const std::array<bool, 7> expected_decode{true, true, false, true, true, false, false};
+    for (std::size_t i = 0; i < expected_decode.size(); ++i) {
+        gate.release();
+        const auto event = gate.wait(i + 2);
+        require(event.decode == expected_decode[i],
+                "prefill did not yield two decode rounds or resume after decode completion");
+        require(event.request == (expected_decode[i] ? 0 : 1),
+                "scheduler advanced the wrong request");
+    }
+    gate.open();
+    require(decoding.wait(nullptr, {}).generated_token_ids.size() == 5,
+            "two-round scheduling lost decode output");
+    require(prefilling.wait(nullptr, {}).generated_token_ids.size() == 2,
+            "two-round scheduling prevented prefill completion");
+}
+
 void cached_request_finishes_during_long_prefill() {
     Harness test;
     // Seed the same logical prefix a prior completed request would retain.
@@ -444,6 +468,7 @@ void impossible_transient_is_rejected_without_execution() {
 
 int main() {
     try {
+        two_decode_rounds_between_prefill_units();
         cached_request_finishes_during_long_prefill();
         prefills_make_progress_and_cancel_independently();
         queued_continuation_keeps_its_cached_lane();

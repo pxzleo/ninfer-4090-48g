@@ -521,13 +521,13 @@ qualification 会自然保守，仍可使用可证明的 persistent-safe backfil
 只有满足以下条件的 boundary 才是 admission turn：
 
 ```text
-(no decode-ready request or the completed GPU unit was a DecodeRound)
+(no decode-ready request or two DecodeRounds have completed since the last prefill unit)
 and (no admitted prefill or the previous prefill opportunity advanced an existing request)
 ```
 
 其他 boundary 可以处理 completion、cancellation、timeout 和 protection bookkeeping，但不能 commit head
-或 backfill admission。这个 gate 保证已有 decode-ready donors 在两次 admission 之间至少完成一次 progress
-round。存在 admitted prefill 时，admission 的 first chunk 和现有请求的轮转 chunk 交替使用 prefill
+或 backfill admission。这个 gate 保证已有 decode-ready donors 在两次 admission 之间至少完成两次 progress
+rounds。存在 admitted prefill 时，admission 的 first chunk 和现有请求的轮转 chunk 交替使用 prefill
 opportunities，持续 ingress 不能饿死已入场请求。没有其他 prefill 时，可继续接纳请求。
 
 一次 admission turn 最多成功 admission 一个 request。Cancellation、timeout 和 permanent-invalid entry 的
@@ -785,7 +785,7 @@ boundary 最多发布一个新 admitted request。
 调度策略为：
 
 ```text
-at a prefill opportunity (no decode-ready rows, or after a DecodeRound):
+at a prefill opportunity (no decode-ready rows, or after two DecodeRounds since the last prefill unit):
     if admission turn and a queued request is feasible:
         admit at most one and run its first prefill/finalization unit
     else if admitted prefill exists:
@@ -794,8 +794,9 @@ otherwise, if decode-ready requests exist:
     run one DecodeRound containing all of them
 ```
 
-存在 decode-ready rows 时，GPU units 仍按 DecodeRound / PrefillChunk 交替；没有 decode-ready rows 时，
-prefill chunks 连续执行。多个 prefill requests 以 lane cursor 轮转，每条请求只在自己的 chunk 更新进度。
+存在 decode-ready rows 时，每个 prefill/finalization unit 后连续执行两个 DecodeRounds，再允许下一个
+prefill opportunity；每轮重新组装全部 decode-ready rows。没有 decode-ready rows 时，prefill chunks 连续执行。
+多个 prefill requests 以 lane cursor 轮转，每条请求只在自己的 chunk 更新进度。
 Admission first unit 和既有 prefill progress 交替消耗 prefill opportunities。新请求 finalization 完成后
 在下一个 boundary 加入 compact decode batch；其到达无需等待另一条请求整段预填充结束。
 
@@ -804,7 +805,8 @@ RoPE delta，以及 DFlash host/device lane selectors。这些执行输入不能
 因为其他 prefill lane 和 DecodeRound 都会复用同一 workspace；sampling 和 GDN state selectors 同样按当前
 lane 选择。Chunk 完成同步后才能轮转或释放该请求的 transient 区域。
 
-Prefill chunk profile 限制插入两个 decode rounds 之间的 GPU 时间。Executor 在每个 boundary 根据当前
+Prefill chunk profile 限制插入两组 decode rounds 之间的 text-prefill extent；两轮策略增加解码机会，
+但不保证固定的解码延迟或首字等待。Executor 在每个 boundary 根据当前
 decode membership 选择 extent：没有 `DECODE_READY` request 时使用 `prefill_chunk`；存在任意
 `DECODE_READY` request 时使用 `prefill_chunk_when_decoding`。新 request 在已有 decode rows 时 admission，
 其 first prefill unit 也使用后者；所有 decode rows 离开后，下一 chunk 恢复前者。选择只发生在 boundary，
